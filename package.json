@@ -24,8 +24,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "dotenv": "^16.4.1",
     "mineflayer": "^4.30.0",
-    "dotenv": "^16.4.1"
+    "mineflayer-auto-eat": "^5.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"

@@ -1,9 +1,39 @@
-# 更新日誌
+# Changelog
 
-所有專案的重要變更都會記錄在這個檔案中。
+## [1.2.2] - 2025-01-27
 
-格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)，
-並且本專案遵守 [語意化版本](https://semver.org/lang/zh-TW/)。
+### 🚨 Critical Issue Discovered
+- **發現**: Mineflayer 4.30.0 聊天功能崩潰問題 (issue #3703)
+- **影響**: 聊天監聽和傳送點系統暫時無法使用
+- **狀態**: 已暫時停用聊天功能確保 bot 穩定性
+
+### 📝 Documentation
+- **新增**: 完整的 `TROUBLESHOOTING.md` 故障排除指南
+- **更新**: `README.md` 加入故障排除章節和解決方案
+- **更新**: `spec.md` 記錄已知問題與限制
+- **記錄**: 社群提供的臨時修復方案
+
+### 🔍 Technical Details
+- **根本原因**: minecraft-protocol 庫的 Buffer.concat 類型錯誤
+- **臨時修復**: 提供了 node_modules 修補方案
+- **風險評估**: 完整分析各種解決方案的利弊
+- **監控**: 持續關注官方修復進度
+
+### 📋 References
+- [Mineflayer Issue #3703](https://github.com/PrismarineJS/mineflayer/issues/3703)
+- 感謝社群貢獻的修復方案
+
+## [1.2.1] - 2025-01-27
+
+### 安全性修正
+- 改用模組級別的 `teleportDestinations` Map 存儲傳送點
+- 改用 `WeakSet` 記錄 tick 錯誤狀態，取代 `bot._tickErrorLogged` 屬性
+- 移除對 bot 實例屬性的直接修改，避免與 mineflayer 內部屬性衝突
+- 提升程式碼安全性，防止意外覆蓋 bot 原生屬性
+
+---
+
+*格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)，並且本專案遵守 [語意化版本](https://semver.org/lang/zh-TW/)。*
 
 ## [1.0.0] - 2025-01-27
 

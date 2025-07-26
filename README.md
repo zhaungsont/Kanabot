@@ -258,3 +258,66 @@ bot.on('whisper', (username, message) => {
 ---
 
 **注意**: 本專案僅供學習和研究用途。請遵守 Minecraft 服務條款和相關伺服器規則。 
+
+## 🛠️ 故障排除 (Troubleshooting)
+
+### 已知問題與解決方案
+
+#### Mineflayer 聊天功能崩潰問題
+
+**問題描述**: 
+Bot 在處理聊天訊息時崩潰，錯誤訊息：
+```
+TypeError [ERR_INVALID_ARG_TYPE]: The "list" argument must be an instance of Array. Received an instance of Buffer
+    at Function.concat (node:buffer:579:3)
+    at updateAndValidateSession (node_modules\minecraft-protocol\src\client\chat.js:61:114)
+```
+
+**影響版本**: 
+- mineflayer: 4.30.0
+- minecraft-protocol: 相關版本
+- Node.js: 22.17.1
+
+**原因**: 
+minecraft-protocol 庫在處理聊天訊息簽名驗證時，預期收到 Array 但實際收到了 Buffer。
+
+**解決方案**: 
+
+**方案 1: 暫時停用聊天監聽器 (目前採用)**
+```javascript
+// 暫時註解掉聊天監聽器，避免崩潰
+// bot.on('chat', (username, message) => {
+//     // 聊天相關處理
+// });
+```
+
+**方案 2: 修補 minecraft-protocol 庫**
+修改 `node_modules/minecraft-protocol/src/client/chat.js` 第 61 行：
+```javascript
+// 原始程式碼 (有問題)
+const acknowledgements = previousMessages.length > 0 ? ['i32', previousMessages.length, 'buffer', Buffer.concat(previousMessages.map(msg => msg.signature || client._signatureCache[msg.id]))] : ['i32', 0]
+
+// 修正程式碼 (臨時修復)
+const acknowledgements = previousMessages.length > 0 ? ['i32', previousMessages.length, 'buffer', Buffer.concat(previousMessages.map(msg => msg.signature || client._signatureCache[msg.id]).filter(buf => Buffer.isBuffer(buf)))] : ['i32', 0]
+```
+
+**相關資源**: 
+- GitHub Issue: [Bot crashes after multiple chats #3703](https://github.com/PrismarineJS/mineflayer/issues/3703)
+- 此問題幫助解決了本專案的相同崩潰問題
+
+**注意事項**:
+- 方案 2 需要在每次 `npm install` 後重新應用
+- 建議關注官方 issue 更新，等待正式修復
+- 目前專案採用方案 1 確保穩定性
+
+---
+
+## 📞 支援
+
+如果遇到其他問題，請參考：
+1. 檢查專門的 **[故障排除指南](./TROUBLESHOOTING.md)** 📋
+2. 查看 [mineflayer 官方文檔](https://github.com/PrismarineJS/mineflayer)
+3. 搜尋 [GitHub Issues](https://github.com/PrismarineJS/mineflayer/issues)
+4. 查看本專案的 `spec.md` 了解詳細規格
+
+--- 
