@@ -1,0 +1,33 @@
+{
+  "name": "aik-minecraft-bot",
+  "version": "1.0.0",
+  "description": "A Minecraft bot using mineflayer with Microsoft authentication",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "dev:verbose": "nodemon --verbose index.js",
+    "clean": "rm -rf node_modules package-lock.json",
+    "reinstall": "npm run clean && npm install"
+  },
+  "keywords": [
+    "minecraft",
+    "bot",
+    "mineflayer",
+    "microsoft",
+    "authentication"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "mineflayer": "^4.30.0",
+    "dotenv": "^16.4.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}

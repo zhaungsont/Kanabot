@@ -1,0 +1,25 @@
+# 環境變數
+.env
+
+# 依賴套件
+node_modules/
+
+# 日誌檔案
+logs/
+*.log
+
+# 作業系統產生的檔案
+.DS_Store
+Thumbs.db
+
+# IDE 設定
+.vscode/
+.idea/
+
+# 暫存檔案
+*.tmp
+*.temp
+
+# 建置輸出
+dist/
+build/ 
