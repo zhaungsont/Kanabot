@@ -177,8 +177,10 @@ VITE_BACKEND_URL=http://localhost:3001
 
 - **Deploy bot** to any offline-mode Minecraft server
 - **Real-time chat** — mirror in-game chat; send messages from browser
-- **Follow** — bot follows a specified player within 5 blocks
-- **Guard** — bot follows a player and attacks hostile mobs within 10 blocks
+- **Follow** — bot follows a specified player, staying within 3 blocks
+- **Guard** — bot protects a player: attacks hostile mobs within 5 blocks via `mineflayer-pvp`, otherwise shadows them within 3 blocks
+- **Weapon auto-equip** — on guard start, bot equips the best sword or axe from inventory; upgrades automatically when a better weapon is picked up
+- **Armor auto-equip** — on spawn, bot equips the best available armor via `mineflayer-armor-manager`
 - **Stop** — cancel current task, return to idle
 - **Event log** — terminal-style stream of bot lifecycle events
 - **Auto idle timeout** — bot disconnects after 10 min of inactivity
@@ -192,7 +194,7 @@ VITE_BACKEND_URL=http://localhost:3001
 |---|---|
 | Backend runtime | Node.js 24.15.0 |
 | Backend framework | Express + Socket.IO |
-| Bot engine | mineflayer + mineflayer-pathfinder |
+| Bot engine | mineflayer + mineflayer-pathfinder + mineflayer-pvp + mineflayer-armor-manager |
 | Frontend framework | React 18 + TypeScript |
 | Frontend build | Vite |
 | Real-time | Socket.IO (WebSocket) |

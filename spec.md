@@ -1,7 +1,7 @@
 # Kanabot — Technical Specification (MVP)
 
-> Version: 0.1.0  
-> Last updated: 2026-05-08
+> Version: 0.2.0  
+> Last updated: 2026-05-09
 
 ---
 
@@ -124,6 +124,8 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 - Socket.IO 4 for real-time
 - mineflayer for Minecraft bot
 - mineflayer-pathfinder for bot movement
+- mineflayer-pvp for combat (guard ability)
+- mineflayer-armor-manager for automatic armor equipping
 
 ### 4.2 Socket.IO Events
 
@@ -176,17 +178,35 @@ Transitions:
 
 #### Follow
 
-- Uses `mineflayer-pathfinder` `GoalFollow(playerEntity, 5)`
+- Uses `mineflayer-pathfinder` `GoalFollow(playerEntity, 3)`
 - Updates goal every 1 second to track player movement
 - Stops if target player leaves the game
 
 #### Guard
 
-- Runs every 333ms via `mineflayer-pvp`:
-  1. Find nearest hostile mob within **10 blocks** of the guarded player
-  2. If found: `bot.pvp.attack(mob)` — automatically approaches and attacks the target
+- Runs every 500ms via `mineflayer-pvp`:
+  1. Find nearest hostile mob within **5 blocks** of the guarded player
+  2. If found: `bot.pvp.attack(mob)` — automatically approaches and attacks the target (movement included)
   3. If none: `bot.pvp.stop()` + `GoalFollow(playerEntity, 3)` — stays within 3 blocks of the guarded player
 - Hostile mobs are detected by `entity.type === 'hostile'`
+- On guard start: automatically equips the best sword or axe from inventory (see Weapon Manager)
+- While guarding: re-evaluates and upgrades weapon whenever the bot picks up a new item
+
+#### Weapon Manager (Guard)
+
+- Triggered on guard start and on every `playerCollect` event where the collector is the bot
+- Scans `bot.inventory.items()` for items ending in `sword` or `axe`
+- Ranks by material tier: `netherite (6) > diamond (5) > iron (4) > stone (3) > golden (2) > wooden (1)`
+- Equips the highest-scoring item to the `hand` slot via `bot.equip(item, 'hand')`
+- Listener is registered on guard start and removed on `stopTask()`
+
+#### Armor Manager
+
+- Plugin: `mineflayer-armor-manager`
+- Loaded on bot creation via `bot.loadPlugin(armorManager)`
+- `bot.armorManager.equipAll()` is called once on the `spawn` event
+- Automatically equips the best available armor from inventory into helmet, chestplate, leggings, and boots slots
+- No manual intervention required; runs passively whenever the bot's inventory changes
 
 #### Basic Greeting
 

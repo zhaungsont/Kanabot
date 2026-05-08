@@ -6,6 +6,24 @@ Format: `[version] — YYYY-MM-DD`
 
 ---
 
+## [0.2.0] — 2026-05-09
+
+### Changed
+
+**Backend**
+- **Guard ability** — reworked using `mineflayer-pvp`; `bot.pvp.attack()` replaces the old `bot.attack()` so the bot now physically chases and fights the target instead of swinging in place
+- **Guard detection range** — reduced from 10 → **5 blocks** around the guarded player
+- **Guard follow range** — reduced from 5 → **3 blocks** when no threat is nearby
+- **Follow range** — corrected to **3 blocks** (was documented as 5)
+
+### Added
+
+**Backend**
+- **Weapon Manager** — on guard start, bot scans inventory and equips the highest-tier sword or axe (`netherite > diamond > iron > stone > golden > wooden`); re-evaluates and upgrades automatically on every `playerCollect` event while guarding
+- **Armor Manager** — integrated `mineflayer-armor-manager`; `bot.armorManager.equipAll()` is called on every `spawn` event to automatically equip the best available armor
+
+---
+
 ## [0.1.0] — 2026-05-08
 
 ### Added
