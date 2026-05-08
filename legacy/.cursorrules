@@ -15,7 +15,7 @@
 ## 核心需求
 
 ### 1. 技術棧要求
-- **運行環境**: Node.js 24.15.0 (使用 `nvm use` 指令)
+- **運行環境**: Node.js 22.17.1 (使用 `nvm use` 指令)
 - **版本控制**: .nvmrc 檔案確保版本一致性
 - **模組系統**: ES Modules
 - **主要套件**: mineflayer (最新版本)
@@ -54,32 +54,17 @@
 ## 專案結構規範
 
 ```
-KANABOT/
-├── backend/                    # 後端專案，使用 Node.js + TypeScript，需依照 .nvmrc 指定版本執行
-│   ├── .env                    # 後端環境變數，不提交到 git
-│   ├── .env.example            # 後端環境變數範本
-│   ├── .nvmrc                  # 後端 Node.js 版本控制檔案
-│   ├── package.json            # 後端 Node.js 專案設定
-│   ├── tsconfig.json           # 後端 TypeScript 設定
-│   └── src/                    # 後端原始碼
-│       └── index.ts            # 後端主程式入口
-│
-├── frontend/                   # 前端專案，使用 TypeScript + React
-│   ├── .env                    # 前端環境變數，不提交到 git
-│   ├── .env.example            # 前端環境變數範本
-│   ├── package.json            # 前端專案設定
-│   ├── tsconfig.json           # 前端 TypeScript 設定
-│   ├── index.html              # 前端 HTML 入口
-│   └── src/                    # 前端原始碼
-│       ├── main.tsx            # React 入口
-│       └── App.tsx             # React 根元件
-│
-├── legacy/                     # 舊版本專案，除非特別提及，否則不需檢視
-├── .gitignore                  # Git 忽略檔案
-├── README.md                   # 使用說明
-├── spec.md                     # 專案規格文件
-├── CHANGELOG.md                # 版本更新記錄
-└── .cursorrules                # Cursor 專案規則
+AIK-bot/
+├── .env                 # 環境變數 (不提交到 git)
+├── .nvmrc              # Node.js 版本控制檔案
+├── .env.example         # 環境變數範本
+├── .gitignore          # Git 忽略檔案
+├── package.json        # Node.js 專案設定 (type: "module")
+├── index.js            # 主程式入口 (ES modules)
+├── README.md           # 使用說明
+├── spec.md             # 專案規格文件
+├── CHANGELOG.md        # 版本更新記錄
+└── .cursorrules        # 本檔案
 ```
 
 ### 環境變數命名
