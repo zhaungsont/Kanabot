@@ -3,6 +3,7 @@ import pkg from 'mineflayer-pathfinder';
 const { pathfinder, Movements, goals } = pkg;
 import pvpPkg from 'mineflayer-pvp';
 const pvp = (pvpPkg as any).plugin;
+import armorManager from 'mineflayer-armor-manager';
 import {
 	BotState,
 	BotConfig,
@@ -42,6 +43,7 @@ export class BotSession {
 	private bot: Bot | null = null;
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private guardInterval: ReturnType<typeof setInterval> | null = null;
+	private guardWeaponListener: ((collector: any) => void) | null = null;
 	private followInterval: ReturnType<typeof setInterval> | null = null;
 	private retryCount = 0;
 	private destroyed = false;
@@ -107,6 +109,7 @@ export class BotSession {
 			});
 			this.bot.loadPlugin(pathfinder);
 			this.bot.loadPlugin(pvp);
+			this.bot.loadPlugin(armorManager);
 			this.setupBotEvents();
 		} catch (err) {
 			this.emitEvent('error', `Failed to create bot: ${err}`);
@@ -130,6 +133,8 @@ export class BotSession {
 
 			const defaultMove = new Movements(bot);
 			bot.pathfinder.setMovements(defaultMove);
+
+			(bot as any).armorManager.equipAll();
 
 			this.setState('idle');
 			this.emitEvent(
@@ -307,15 +312,53 @@ export class BotSession {
 
 	/** Looks toward the nearest player or mob every physics tick. */
 	private lookAtNearestEntity(bot: Bot): void {
-		const target = bot
-			.nearestEntity
+		const target = bot.nearestEntity(
 			// 'animal' is a valid runtime type; cast until mineflayer typings catch up
-			// (e) => e.type === 'player' || (e.type as string) === 'animal',
-			();
-		console.log('entity type', target?.type);
-		// console.log('entity.displayName', target?.displayName);
+			(e) => e.type === 'player' || (e.type as string) === 'animal',
+		);
 		if (!target) return;
 		bot.lookAt(target.position.offset(0, target.height * 0.9, 0));
+	}
+
+	/** Equips the highest-tier sword or axe found in the bot's inventory. */
+	private equipBestWeapon(): void {
+		if (!this.bot) return;
+
+		const TIERS: Record<string, number> = {
+			netherite: 6,
+			diamond: 5,
+			iron: 4,
+			stone: 3,
+			golden: 2,
+			wooden: 1,
+			wood: 1,
+		};
+
+		let bestItem = null;
+		let bestScore = -1;
+
+		for (const item of this.bot.inventory.items()) {
+			const name = item.name; // e.g. "diamond_sword", "iron_axe"
+			if (!name.endsWith('sword') && !name.endsWith('axe')) continue;
+			const material = Object.keys(TIERS).find((m) => name.startsWith(m));
+			if (!material) continue;
+			const score = TIERS[material];
+			if (score > bestScore) {
+				bestScore = score;
+				bestItem = item;
+			}
+		}
+
+		if (!bestItem) return;
+
+		this.bot
+			.equip(bestItem, 'hand')
+			.then(() => {
+				this.emitEvent('info', `Equipped ${bestItem!.name} for combat.`);
+			})
+			.catch(() => {
+				/* item may have moved */
+			});
 	}
 
 	private startFollow(playerName: string): void {
@@ -378,6 +421,15 @@ export class BotSession {
 		this.emitEvent('info', `Now guarding "${playerName}".`);
 		this.emitSystemChat(`Bot acknowledged: guarding "${playerName}".`);
 
+		this.equipBestWeapon();
+
+		// Re-equip whenever the bot picks up a new item in case it's a better weapon
+		this.guardWeaponListener = (collector: any) => {
+			if (!this.bot || collector !== this.bot.entity) return;
+			this.equipBestWeapon();
+		};
+		this.bot.on('playerCollect', this.guardWeaponListener);
+
 		const botPvp = (this.bot as any).pvp;
 
 		this.guardInterval = setInterval(() => {
@@ -422,6 +474,7 @@ export class BotSession {
 
 	private stopTask(): void {
 		this.clearGuardInterval();
+		this.clearGuardWeaponListener();
 		this.clearFollowInterval();
 
 		if (this.bot && this.state === 'task') {
@@ -511,6 +564,13 @@ export class BotSession {
 			clearInterval(this.guardInterval);
 			this.guardInterval = null;
 		}
+	}
+
+	private clearGuardWeaponListener(): void {
+		if (this.guardWeaponListener && this.bot) {
+			this.bot.removeListener('playerCollect', this.guardWeaponListener);
+		}
+		this.guardWeaponListener = null;
 	}
 
 	private clearFollowInterval(): void {
