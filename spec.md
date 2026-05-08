@@ -182,11 +182,11 @@ Transitions:
 
 #### Guard
 
-- Runs every 500ms:
-  1. Find nearest hostile mob within 10 blocks of the guarded player
-  2. If found: `bot.attack(mob)`
-  3. If none: `GoalFollow(playerEntity, 5)`
-- Hostile mob list includes: zombie, skeleton, creeper, spider, cave_spider, witch, enderman, blaze, ghast, slime, magma_cube, piglin_brute, zombified_piglin, husk, stray, phantom, drowned, ravager, pillager, vindicator, evoker, vex, warden, elder_guardian, guardian, silverfish, endermite
+- Runs every 333ms via `mineflayer-pvp`:
+  1. Find nearest hostile mob within **10 blocks** of the guarded player
+  2. If found: `bot.pvp.attack(mob)` — automatically approaches and attacks the target
+  3. If none: `bot.pvp.stop()` + `GoalFollow(playerEntity, 3)` — stays within 3 blocks of the guarded player
+- Hostile mobs are detected by `entity.type === 'hostile'`
 
 #### Basic Greeting
 

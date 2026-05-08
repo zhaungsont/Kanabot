@@ -1,6 +1,8 @@
 import mineflayer, { Bot } from 'mineflayer';
 import pkg from 'mineflayer-pathfinder';
 const { pathfinder, Movements, goals } = pkg;
+import pvpPkg from 'mineflayer-pvp';
+const pvp = (pvpPkg as any).plugin;
 import {
 	BotState,
 	BotConfig,
@@ -14,9 +16,9 @@ const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_BASE_MS = 5000;
 const FOLLOW_RANGE = 3;
-const GUARD_FOLLOW_RANGE = 5;
-const GUARD_MOB_RANGE = 10;
-const GUARD_TICK_MS = 500;
+const GUARD_FOLLOW_RANGE = 3; // stay within 3 blocks when no threat
+const GUARD_MOB_RANGE = 10; // threat detection radius around guarded player
+const GUARD_TICK_MS = 333;
 const FOLLOW_UPDATE_MS = 1000;
 
 /** Entity type names treated as hostile in the guard ability. */
@@ -104,6 +106,7 @@ export class BotSession {
 				auth: 'offline',
 			});
 			this.bot.loadPlugin(pathfinder);
+			this.bot.loadPlugin(pvp);
 			this.setupBotEvents();
 		} catch (err) {
 			this.emitEvent('error', `Failed to create bot: ${err}`);
@@ -310,6 +313,7 @@ export class BotSession {
 			// (e) => e.type === 'player' || (e.type as string) === 'animal',
 			();
 		console.log('entity type', target?.type);
+		// console.log('entity.displayName', target?.displayName);
 		if (!target) return;
 		bot.lookAt(target.position.offset(0, target.height * 0.9, 0));
 	}
@@ -374,7 +378,9 @@ export class BotSession {
 		this.emitEvent('info', `Now guarding "${playerName}".`);
 		this.emitSystemChat(`Bot acknowledged: guarding "${playerName}".`);
 
-		this.guardInterval = setInterval(async () => {
+		const botPvp = (this.bot as any).pvp;
+
+		this.guardInterval = setInterval(() => {
 			if (!this.bot || this.destroyed || this.currentTask !== 'guard') return;
 
 			const guardedPlayer = this.bot.players[playerName];
@@ -392,8 +398,7 @@ export class BotSession {
 			let minDist = GUARD_MOB_RANGE;
 
 			for (const entity of Object.values(this.bot.entities)) {
-				if (!entity || entity.type !== 'mob') continue;
-				if (entity.mobType !== 'hostile') continue;
+				if (!entity || entity.type !== 'hostile') continue;
 				const dist = entity.position.distanceTo(playerPos);
 				if (dist < minDist) {
 					minDist = dist;
@@ -402,12 +407,11 @@ export class BotSession {
 			}
 
 			if (nearestMob) {
-				try {
-					await this.bot.attack(nearestMob);
-				} catch (_) {
-					/* entity may have despawned */
-				}
+				// pvp.attack handles pathfinding toward the target and attacking it
+				botPvp.attack(nearestMob);
 			} else {
+				// No threat nearby — stop any active pvp chase and shadow the player
+				botPvp.stop();
 				this.bot.pathfinder.setGoal(
 					new goals.GoalFollow(guardedPlayer.entity, GUARD_FOLLOW_RANGE),
 					true,
@@ -421,6 +425,11 @@ export class BotSession {
 		this.clearFollowInterval();
 
 		if (this.bot && this.state === 'task') {
+			try {
+				(this.bot as any).pvp.stop();
+			} catch (_) {
+				/* ignore if pvp not active */
+			}
 			try {
 				this.bot.pathfinder.stop();
 			} catch (_) {
