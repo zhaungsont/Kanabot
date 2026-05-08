@@ -1,0 +1,81 @@
+/* ─── Design Tokens ──────────────────────────────────────────────────────── */
+:root {
+  --color-bg: #FFF7D1;
+  --color-accent: #FFE700;
+  --color-accent-dark: #E5CC00;
+  --color-accent-light: #FFF4A3;
+  --color-surface: #FFFAE8;
+  --color-surface-2: #FFF3C4;
+  --color-border: #F0DC8C;
+  --color-text: #2C2C2C;
+  --color-text-muted: #888877;
+  --color-terminal-bg: #1A1A2E;
+  --color-terminal-text: #E0E0E0;
+  --color-success: #4CAF50;
+  --color-error: #FF6B6B;
+  --color-warning: #FFA500;
+  --color-info: #64B5F6;
+  --color-bot-msg: #FFE700;
+  --color-system-msg: #A0A0B8;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.10);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Fira Code', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ─── Utility ────────────────────────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
