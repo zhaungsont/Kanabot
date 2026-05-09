@@ -124,26 +124,38 @@ export class BotSession {
 		const bot = this.bot;
 		if (!bot) return;
 
-		bot.once('spawn', () => {
+		bot.on('spawn', () => {
 			// Stale-event guard: skip if this bot has already been replaced or destroyed.
 			if (this.bot !== bot || this.destroyed) return;
 
-			this.spawnedAt = new Date();
-			this.retryCount = 0;
+			const isRespawn = this.state === 'dead';
 
-			const defaultMove = new Movements(bot);
-			bot.pathfinder.setMovements(defaultMove);
+			if (!isRespawn) {
+				// Initial spawn: one-time setup.
+				this.spawnedAt = new Date();
+				this.retryCount = 0;
+
+				const defaultMove = new Movements(bot);
+				bot.pathfinder.setMovements(defaultMove);
+
+				this.emitEvent(
+					'success',
+					`Bot "${this.config.botName}" spawned successfully!`,
+				);
+				this.emitSystemChat(
+					`Bot "${this.config.botName}" has joined the server.`,
+				);
+			} else {
+				// Respawn after death: restore active state.
+				this.emitEvent(
+					'info',
+					`Bot "${this.config.botName}" has respawned.`,
+				);
+				this.emitSystemChat(`Bot "${this.config.botName}" has respawned.`);
+			}
 
 			(bot as any).armorManager.equipAll();
-
 			this.setState('idle');
-			this.emitEvent(
-				'success',
-				`Bot "${this.config.botName}" spawned successfully!`,
-			);
-			this.emitSystemChat(
-				`Bot "${this.config.botName}" has joined the server.`,
-			);
 			this.resetIdleTimer();
 		});
 
@@ -190,8 +202,26 @@ export class BotSession {
 			// 'end' fires right after 'kicked'; wasKicked flag blocks retry there.
 		});
 
-		bot.on('error', (err: Error) => {
+		bot.on('error', (err: Error & { name?: string }) => {
 			if (this.bot !== bot) return;
+
+			// protodef PartialReadError — indicates a Minecraft version mismatch between
+			// the bot config and the actual server. The session will end and retry, so
+			// just surface a clear diagnostic rather than a raw stack trace.
+			if (
+				err.name === 'PartialReadError' ||
+				err.constructor?.name === 'PartialReadError' ||
+				err.message?.includes('Unexpected buffer end')
+			) {
+				this.emitEvent(
+					'error',
+					`Packet parse error — possible version mismatch. ` +
+						`Try setting the Minecraft version explicitly (e.g. "1.21.4"). ` +
+						`[${err.message}]`,
+				);
+				return;
+			}
+
 			const msg = friendlyErrorMessage(err);
 			this.emitEvent('error', `Bot error: ${msg}`);
 
