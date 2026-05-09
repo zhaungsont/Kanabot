@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { BotSessionInfo, ChatMessage, EventLogEntry, BotConfig } from '../types';
+import { BotSessionInfo, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion } from '../types';
 
 const BACKEND_URL = import.meta.env['VITE_BACKEND_URL'] ?? 'http://localhost:3001';
 const MAX_CHAT_MESSAGES = 200;
@@ -89,10 +89,19 @@ export function useBotSession() {
   );
 
   const performAction = useCallback(
-    (type: 'follow' | 'guard' | 'stop', target?: string) => {
+    (action: BotAction) => {
       const socket = socketRef.current;
       if (!socket || !sessionId) return;
-      socket.emit('bot:action', sessionId, { type, target });
+      socket.emit('bot:action', sessionId, action);
+    },
+    [sessionId]
+  );
+
+  const excavate = useCallback(
+    (region: ExcavateRegion) => {
+      const socket = socketRef.current;
+      if (!socket || !sessionId) return;
+      socket.emit('bot:action', sessionId, { type: 'excavate', region });
     },
     [sessionId]
   );
@@ -109,5 +118,6 @@ export function useBotSession() {
     disconnectBot,
     sendChat,
     performAction,
+    excavate,
   };
 }

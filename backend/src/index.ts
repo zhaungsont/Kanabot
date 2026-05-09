@@ -113,7 +113,15 @@ io.on('connection', (socket) => {
   socket.on('bot:action', (sessionId: string, action: BotAction) => {
     const session = botManager.getSession(sessionId);
     if (!session) return;
-    session.performAction(action.type, action.target);
+
+    if (action.type === 'excavate') {
+      session.performAction('excavate', undefined, action.region);
+    } else if (action.type === 'stop') {
+      session.performAction('stop');
+    } else {
+      session.performAction(action.type, action.target);
+    }
+
     session.resetIdleTimer();
   });
 

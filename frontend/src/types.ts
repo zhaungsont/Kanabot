@@ -1,5 +1,14 @@
 export type BotState = 'disconnected' | 'spawning' | 'idle' | 'task' | 'dead';
-export type TaskType = 'follow' | 'guard' | null;
+export type TaskType = 'follow' | 'guard' | 'excavate' | null;
+
+export interface ExcavateRegion {
+  x1: number;
+  y1: number;
+  z1: number;
+  x2: number;
+  y2: number;
+  z2: number;
+}
 
 export interface BotConfig {
   serverHost: string;
@@ -31,7 +40,7 @@ export interface EventLogEntry {
   timestamp: number;
 }
 
-export interface BotAction {
-  type: 'follow' | 'guard' | 'stop';
-  target?: string;
-}
+export type BotAction =
+  | { type: 'follow' | 'guard'; target: string }
+  | { type: 'stop' }
+  | { type: 'excavate'; region: ExcavateRegion };

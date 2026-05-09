@@ -126,6 +126,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 - mineflayer-pathfinder for bot movement
 - mineflayer-pvp for combat (guard ability)
 - mineflayer-armor-manager for automatic armor equipping
+- mineflayer-tool for automatic optimal tool selection (excavate ability)
 
 ### 4.2 Socket.IO Events
 
@@ -208,6 +209,23 @@ Transitions:
 - Automatically equips the best available armor from inventory into helmet, chestplate, leggings, and boots slots
 - No manual intervention required; runs passively whenever the bot's inventory changes
 
+#### Excavate
+
+- Command (in-game chat): `!dig <x1> <y1> <z1> <x2> <y2> <z2>` — two absolute corner coordinates
+- Also triggerable from frontend ActionPanel via `bot:action { type: 'excavate', region }`
+- Implementation: `ExcavateTask` class in `backend/src/tasks/excavateTask.ts`
+- Algorithm:
+  1. Normalise coordinates (min/max on each axis)
+  2. Reject if total block count exceeds **10,000** (hard safety limit)
+  3. Build ordered dig list: Y layers top-down, zigzag XZ within each layer
+  4. For each block: navigate within 3 blocks via pathfinder, equip optimal tool via `mineflayer-tool`, call `bot.dig()`
+  5. Non-diggable blocks (air, bedrock, barrier) are skipped automatically
+  6. If no suitable tool is in inventory, bot digs bare-handed (warning logged, task continues)
+  7. Progress milestones at every 10% are emitted to EventLog
+  8. On completion: bot chats `"Excavation complete!"` and emits `success` event; transitions back to `idle`
+- Cancellation: `!stop` or Stop Task button sets `abortFlag`; running loop exits at next iteration
+- New dependency: `mineflayer-tool` — loaded in `BotSession.createBot()` via `bot.loadPlugin(toolPlugin)`
+
 #### Basic Greeting
 
 - Triggered by: in-game chat containing `"hi bot"` or `"hello bot"` (case-insensitive)
@@ -230,7 +248,7 @@ Transitions:
 
 ```typescript
 type BotState = 'disconnected' | 'spawning' | 'idle' | 'task' | 'dead';
-type TaskType = 'follow' | 'guard' | null;
+type TaskType = 'follow' | 'guard' | 'excavate' | null;
 
 interface BotSessionInfo {
   sessionId: string;

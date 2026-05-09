@@ -35,6 +35,8 @@
     - Constantly stay within 5 blocks from said player while fighting off any hostile mobs within 10 blocks from said player.
   - Stop following or guarding a player
 - Basic greetings (string include "hi bot" or "hello bot"): reply with "Hi there!"
+- Digging / landscaping / excavating: dig a rectangular box specified by player with x, y, z axis. The bot must be able to locate the physical in-game location of the spot, equip the optimal tool based on the geology, and remove all the blocks from the specified area, before finally report that the task is finished. During the excavation, the bot should be able to switch between shovels or pickaxes depending on the block it's trying to excavate.
+- locate and dig ores within a 3 dimensional area. The player will specify a 3D area denoted by 2 diagonal coordinates, and the bot will attempt to mine the specified ores within the area with the best tool. The bot is allowed to excavate other blocks within the confines, in order to navigate to the desired ores. The bot should be able to switch between shovels or pickaxes depending on the block it's trying to excavate.
 
 ## Backend
 - Tech stack: NodeJS v24.15.0 (use nvm for node version control) for client request handling, mineflayer JS library for bot control implementations. TypeScript is optimal for the entire backend project to ensure type safety.

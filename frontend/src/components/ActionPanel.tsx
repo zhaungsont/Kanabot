@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { BotSessionInfo } from '../types';
+import { BotSessionInfo, BotAction, ExcavateRegion } from '../types';
 
 interface ActionPanelProps {
   botInfo: BotSessionInfo;
-  onAction: (type: 'follow' | 'guard' | 'stop', target?: string) => void;
+  onAction: (action: BotAction) => void;
+  onExcavate: (region: ExcavateRegion) => void;
   onDisconnect: () => void;
 }
 
@@ -26,9 +27,42 @@ function useUptime(spawnedAt: Date | null): string {
   return `${h}:${m}:${s}`;
 }
 
-export default function ActionPanel({ botInfo, onAction, onDisconnect }: ActionPanelProps) {
+const TASK_ICON: Record<string, string> = {
+  follow: '🏃',
+  guard: '🛡',
+  excavate: '⛏',
+};
+
+function CoordInput({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <label style={styles.coordLabel}>
+      <span style={styles.coordAxisLabel}>{label}</span>
+      <input
+        style={styles.coordInput}
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        placeholder="0"
+      />
+    </label>
+  );
+}
+
+export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnect }: ActionPanelProps) {
   const [followTarget, setFollowTarget] = useState('');
   const [guardTarget, setGuardTarget] = useState('');
+  const [dig, setDig] = useState({ x1: '', y1: '', z1: '', x2: '', y2: '', z2: '' });
   const uptime = useUptime(botInfo.spawnedAt);
 
   const isIdle = botInfo.state === 'idle';
@@ -37,12 +71,21 @@ export default function ActionPanel({ botInfo, onAction, onDisconnect }: ActionP
 
   const handleFollow = () => {
     if (!followTarget.trim()) return;
-    onAction('follow', followTarget.trim());
+    onAction({ type: 'follow', target: followTarget.trim() });
   };
 
   const handleGuard = () => {
     if (!guardTarget.trim()) return;
-    onAction('guard', guardTarget.trim());
+    onAction({ type: 'guard', target: guardTarget.trim() });
+  };
+
+  const digCoords = [dig.x1, dig.y1, dig.z1, dig.x2, dig.y2, dig.z2].map(Number);
+  const digValid = digCoords.every((n) => !isNaN(n)) && [dig.x1, dig.y1, dig.z1, dig.x2, dig.y2, dig.z2].every((s) => s !== '');
+
+  const handleExcavate = () => {
+    if (!digValid) return;
+    const [x1, y1, z1, x2, y2, z2] = digCoords as [number, number, number, number, number, number];
+    onExcavate({ x1, y1, z1, x2, y2, z2 });
   };
 
   return (
@@ -54,8 +97,8 @@ export default function ActionPanel({ botInfo, onAction, onDisconnect }: ActionP
           <span style={styles.stateName}>{botInfo.state.toUpperCase()}</span>
           {botInfo.currentTask && (
             <span style={styles.taskBadge}>
-              {botInfo.currentTask === 'follow' ? '🏃' : '🛡'} {botInfo.currentTask}{' '}
-              <strong>{botInfo.taskTarget}</strong>
+              {TASK_ICON[botInfo.currentTask] ?? '⚙'} {botInfo.currentTask}
+              {botInfo.taskTarget && <> <strong>{botInfo.taskTarget}</strong></>}
             </span>
           )}
         </div>
@@ -76,6 +119,8 @@ export default function ActionPanel({ botInfo, onAction, onDisconnect }: ActionP
 
       {/* Actions */}
       <div style={styles.actions}>
+
+        {/* Follow */}
         <div style={styles.actionGroup}>
           <label style={styles.actionLabel}>
             <span>🏃 Follow Player</span>
@@ -97,6 +142,7 @@ export default function ActionPanel({ botInfo, onAction, onDisconnect }: ActionP
           </button>
         </div>
 
+        {/* Guard */}
         <div style={styles.actionGroup}>
           <label style={styles.actionLabel}>
             <span>🛡 Guard Player</span>
@@ -118,10 +164,35 @@ export default function ActionPanel({ botInfo, onAction, onDisconnect }: ActionP
           </button>
         </div>
 
+        {/* Excavate */}
+        <div style={styles.excavateGroup}>
+          <span style={styles.excavateTitle}>⛏ Excavate Region</span>
+          <div style={styles.coordRow}>
+            <span style={styles.coordCornerLabel}>From</span>
+            <CoordInput label="X" value={dig.x1} onChange={(v) => setDig((d) => ({ ...d, x1: v }))} disabled={!isIdle} />
+            <CoordInput label="Y" value={dig.y1} onChange={(v) => setDig((d) => ({ ...d, y1: v }))} disabled={!isIdle} />
+            <CoordInput label="Z" value={dig.z1} onChange={(v) => setDig((d) => ({ ...d, z1: v }))} disabled={!isIdle} />
+          </div>
+          <div style={styles.coordRow}>
+            <span style={styles.coordCornerLabel}>To</span>
+            <CoordInput label="X" value={dig.x2} onChange={(v) => setDig((d) => ({ ...d, x2: v }))} disabled={!isIdle} />
+            <CoordInput label="Y" value={dig.y2} onChange={(v) => setDig((d) => ({ ...d, y2: v }))} disabled={!isIdle} />
+            <CoordInput label="Z" value={dig.z2} onChange={(v) => setDig((d) => ({ ...d, z2: v }))} disabled={!isIdle} />
+          </div>
+          <button
+            style={{ ...styles.actionBtn, background: '#8B4513', color: '#fff', alignSelf: 'flex-start', marginTop: '0.25rem' }}
+            onClick={handleExcavate}
+            disabled={!isIdle || !digValid}
+          >
+            Start Excavation
+          </button>
+        </div>
+
+        {/* Stop button */}
         {isInTask && (
           <button
             style={{ ...styles.actionBtn, background: '#FF9800', color: '#fff', alignSelf: 'flex-end' }}
-            onClick={() => onAction('stop')}
+            onClick={() => onAction({ type: 'stop' })}
           >
             ⏹ Stop Task
           </button>
@@ -250,6 +321,57 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
     flexShrink: 0,
     transition: 'opacity 0.15s',
+  },
+  excavateGroup: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '0.4rem',
+    padding: '0.65rem',
+    background: 'var(--color-surface-2)',
+    border: '1.5px solid var(--color-border)',
+    borderRadius: 'var(--radius-sm)',
+  },
+  excavateTitle: {
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    color: 'var(--color-text)',
+  },
+  coordRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.35rem',
+  },
+  coordCornerLabel: {
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    color: 'var(--color-text-muted)',
+    width: '30px',
+    flexShrink: 0,
+  },
+  coordLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.2rem',
+    flex: 1,
+  },
+  coordAxisLabel: {
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    color: 'var(--color-text-muted)',
+    width: '10px',
+    flexShrink: 0,
+  },
+  coordInput: {
+    flex: 1,
+    padding: '0.35rem 0.4rem',
+    borderRadius: 'var(--radius-sm)',
+    border: '1.5px solid var(--color-border)',
+    fontSize: '0.8rem',
+    fontFamily: 'var(--font-mono)',
+    outline: 'none',
+    background: '#fff',
+    color: 'var(--color-text)',
+    minWidth: 0,
   },
   disconnectBtn: {
     background: 'transparent',

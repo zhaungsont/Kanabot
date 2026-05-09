@@ -19,6 +19,7 @@ export default function DashboardPage() {
     disconnectBot,
     sendChat,
     performAction,
+    excavate,
   } = useBotSession();
 
   const isActive = botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
@@ -64,6 +65,7 @@ export default function DashboardPage() {
               <ActionPanel
                 botInfo={botInfo}
                 onAction={performAction}
+                onExcavate={excavate}
                 onDisconnect={disconnectBot}
               />
             )

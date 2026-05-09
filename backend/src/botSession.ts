@@ -4,6 +4,7 @@ const { pathfinder, Movements, goals } = pkg;
 import pvpPkg from 'mineflayer-pvp';
 const pvp = (pvpPkg as any).plugin;
 import armorManager from 'mineflayer-armor-manager';
+import { plugin as toolPlugin } from 'mineflayer-tool';
 import {
 	BotState,
 	BotConfig,
@@ -11,7 +12,9 @@ import {
 	EventLogEntry,
 	TaskType,
 	BotSessionInfo,
+	ExcavateRegion,
 } from './types.js';
+import { ExcavateTask } from './tasks/excavateTask.js';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRY_ATTEMPTS = 5;
@@ -45,6 +48,7 @@ export class BotSession {
 	private guardInterval: ReturnType<typeof setInterval> | null = null;
 	private guardWeaponListener: ((collector: any) => void) | null = null;
 	private followInterval: ReturnType<typeof setInterval> | null = null;
+	private activeExcavateTask: ExcavateTask | null = null;
 	private retryCount = 0;
 	private destroyed = false;
 	private wasKicked = false;
@@ -110,6 +114,7 @@ export class BotSession {
 			this.bot.loadPlugin(pathfinder);
 			this.bot.loadPlugin(pvp);
 			this.bot.loadPlugin(armorManager);
+			this.bot.loadPlugin(toolPlugin);
 			this.setupBotEvents();
 		} catch (err) {
 			this.emitEvent('error', `Failed to create bot: ${err}`);
@@ -306,7 +311,11 @@ export class BotSession {
 		this.resetIdleTimer();
 	}
 
-	performAction(type: 'follow' | 'guard' | 'stop', target?: string): void {
+	performAction(
+		type: 'follow' | 'guard' | 'stop' | 'excavate',
+		target?: string,
+		region?: ExcavateRegion,
+	): void {
 		if (!this.bot) return;
 
 		if (type === 'stop') {
@@ -324,12 +333,21 @@ export class BotSession {
 			return;
 		}
 
+		this.resetIdleTimer();
+
+		if (type === 'excavate') {
+			if (!region) {
+				this.emitEvent('warning', 'Excavate task requires region coordinates.');
+				return;
+			}
+			this.startExcavate(region);
+			return;
+		}
+
 		if (!target) {
 			this.emitEvent('warning', 'No target player specified for task.');
 			return;
 		}
-
-		this.resetIdleTimer();
 
 		if (type === 'follow') {
 			this.startFollow(target);
@@ -502,10 +520,74 @@ export class BotSession {
 		}, GUARD_TICK_MS);
 	}
 
+	private startExcavate(region: ExcavateRegion): void {
+		if (!this.bot) return;
+
+		this.currentTask = 'excavate';
+		this.taskTarget = null;
+		this.setState('task');
+
+		const task = new ExcavateTask();
+		this.activeExcavateTask = task;
+
+		const { x1, y1, z1, x2, y2, z2 } = region;
+		this.emitEvent(
+			'info',
+			`Excavate task started: (${x1},${y1},${z1}) → (${x2},${y2},${z2}).`,
+		);
+		if (this.bot) {
+			this.bot.chat(
+				`Starting excavation from (${x1},${y1},${z1}) to (${x2},${y2},${z2}).`,
+			);
+		}
+
+		task
+			.run(this.bot, region, {
+				onEvent: (type, message) => this.emitEvent(type, message),
+				onProgress: (current, total) => {
+					// Report every 10% milestone to avoid spamming the event log.
+					const pct = Math.floor((current / total) * 100);
+					const prevPct = Math.floor(((current - 1) / total) * 100);
+					if (pct !== prevPct && pct % 10 === 0) {
+						this.emitEvent('info', `Excavation progress: ${pct}% (${current}/${total})`);
+					}
+				},
+				onComplete: () => {
+					this.emitEvent('success', 'Excavation complete!');
+					if (this.bot) this.bot.chat('Excavation complete!');
+					this.activeExcavateTask = null;
+					this.currentTask = null;
+					this.taskTarget = null;
+					this.setState('idle');
+					this.resetIdleTimer();
+				},
+				onAbort: () => {
+					this.activeExcavateTask = null;
+					this.currentTask = null;
+					this.taskTarget = null;
+					if (this.state === 'task') this.setState('idle');
+					this.resetIdleTimer();
+				},
+			})
+			.catch((err: Error) => {
+				this.emitEvent('error', `Excavation error: ${err.message}`);
+				this.activeExcavateTask = null;
+				this.currentTask = null;
+				this.taskTarget = null;
+				if (this.state === 'task') this.setState('idle');
+				this.resetIdleTimer();
+			});
+	}
+
 	private stopTask(): void {
 		this.clearGuardInterval();
 		this.clearGuardWeaponListener();
 		this.clearFollowInterval();
+
+		if (this.activeExcavateTask) {
+			this.activeExcavateTask.abort();
+			// activeExcavateTask is cleared in the onAbort callback of run().
+		}
 
 		if (this.bot && this.state === 'task') {
 			try {
@@ -560,6 +642,31 @@ export class BotSession {
 			this.performAction('guard', target);
 		} else if (lower === '!stop') {
 			this.performAction('stop');
+		} else if (lower.startsWith('!dig')) {
+			// Usage: !dig <x1> <y1> <z1> <x2> <y2> <z2>
+			const parts = message.trim().split(/\s+/);
+			if (parts.length !== 7) {
+				if (this.bot) {
+					this.bot.chat('Usage: !dig <x1> <y1> <z1> <x2> <y2> <z2>');
+				}
+				return;
+			}
+			const coords = parts.slice(1).map(Number);
+			if (coords.some(isNaN)) {
+				if (this.bot) {
+					this.bot.chat('All coordinates must be numbers.');
+				}
+				return;
+			}
+			const [x1, y1, z1, x2, y2, z2] = coords as [
+				number,
+				number,
+				number,
+				number,
+				number,
+				number,
+			];
+			this.performAction('excavate', undefined, { x1, y1, z1, x2, y2, z2 });
 		}
 	}
 
