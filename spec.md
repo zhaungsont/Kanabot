@@ -85,6 +85,37 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 - **Stop** button: `bot:action { type: 'stop' }` — only shown when bot is in `task` state
 - Buttons disabled when bot is in `spawning` or `dead` state
 
+#### ArmorPanel
+
+- Displayed in the left column whenever the bot session is active (`spawning`, `idle`, `task`, or `dead` state)
+- Shows all four armor slots in fixed order: **Head → Torso → Legs → Feet**
+- Each row shows a slot icon, slot label, and either the equipped item's `displayName` or a greyed-out "No X" placeholder when empty
+- When a slot is occupied, a **Drop** button appears next to the item name; clicking it:
+  1. Emits `bot:unequip` (sessionId, slot) to the backend via Socket.IO
+  2. Backend calls `bot.unequip(slot)` to move the item to the bot's inventory
+  3. Backend then calls `bot.tossStack(item)` to physically drop it in-game
+  4. Backend emits a `bot:armor` update; the frontend reflects the change in real time
+- Drop buttons are disabled when the bot is not in `idle` or `task` state
+- Armor updates are pushed via a dedicated `bot:armor` Socket.IO event emitted on:
+  - Initial bot spawn
+  - Any `entityEquip` event for `bot.entity`
+  - Successful `unequipAndDropArmor()` call
+
+#### PlayerListPanel
+
+- A full-width clickable bar expands a lazy-loaded dropdown, with a searchable server roster and 25 players per page. Collapsing unmounts the list and unsubscribes from roster updates.
+- Includes all players exposed by Mineflayer's cached `bot.players`, including players without tracked entities. Servers/proxies may hide or customize that roster.
+- Compact Minecraft Tab-style rows place the server-supplied skin head icon (or initial fallback), username, self/bot marker, and health hearts on the left, with labeled icon buttons for actions on the right. A secondary line shows available location, ping, and game mode.
+- Displays position/dimension/distance only for currently tracked entities. An untracked player may be far away or in another dimension; no exact remote dimension/location is inferred.
+- Displays health only when supplied by Mineflayer's self state, an entity health field, or version-named entity metadata. Health is server-reported, not guaranteed to represent another player's true health. Ten hearts scale to the reported maximum (normally two HP each); the tooltip and accessible label provide the numeric HP. Unknown maximum health is marked with a question mark and uses a reference scale of at least 20 HP; missing health shows a muted heart and question mark.
+- `bot:players:subscribe` enables a three-second sampling loop only while the panel is open and the tab is visible. Closing/hiding, death, disconnect, or disposal stops the loop. Unchanged snapshots are suppressed, and rapid toggles reuse a fresh cached snapshot.
+- Roster reads do not request new Minecraft packets or force chunk loading. Viewing does not reset the idle timeout.
+- Per-player controls: **Whisper**, **Follow**, and **Attack**. Attack has an inline confirmation. Self actions and untrackable follow/attack targets are disabled; creative-mode attacks are rejected. Starting tasks requires idle state and completed cleanup of the previous task.
+- Follow and attack use transport-independent modules and shared target/lifecycle checks: tracked entity, same observable dimension, loaded target chunk, 64-block distance cap, path failure/timeout, and a 30-second movement-progress watchdog. Dynamic follow does not continually reset its goal. Scoped pathfinding limits and non-destructive movement settings are restored after cleanup.
+- Whispers contain 1–200 characters on one line, use `bot.whisper()`, and do not require the target's entity to be tracked. Whispers can run during other tasks. Command acknowledgement is not a delivery receipt. Sent/received whispers are marked private in the chat mirror.
+- The new player endpoints and the existing task-action endpoint verify socket ownership of the session. This does not add persistent accounts or change the current browser-disconnect/session lifetime model.
+- Shared JSON contracts: `shared/playerContracts.d.ts`; backend modules: `backend/src/players/`, `backend/src/tasks/{trackedPlayerTask,followTask,attackTask}.ts`; frontend: `usePlayerList` and `PlayerListPanel`.
+
 #### AdBanner
 
 - Placeholder `<div>` areas for Google AdSense integration (top and bottom of page)
@@ -138,6 +169,8 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 | `bot:disconnect` | `sessionId: string` | Manually disconnect bot |
 | `bot:chat` | `sessionId: string, message: string` | Send chat to game |
 | `bot:action` | `sessionId: string, action: BotAction` | Issue a task or stop |
+| `bot:players:subscribe` | `sessionId, enabled, callback(result)` | Enable/disable the owned session's roster stream |
+| `bot:playerAction` | `sessionId, { type: 'follow' \| 'attack' \| 'whisper', target, message? }, callback(result)` | Validated player command; whispers require a message |
 
 #### Server → Client
 
@@ -147,6 +180,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 | `bot:chat` | `ChatMessage` | In-game chat event (or system message) |
 | `bot:event` | `EventLogEntry` | Lifecycle event for EventLog |
 | `bot:error` | `string` | Fatal error message |
+| `bot:players` | `{ sessionId, players: ServerPlayer[], updatedAt }` | Changed roster snapshot for an enabled viewer |
 
 ### 4.3 BotConfig Type
 
@@ -170,7 +204,7 @@ disconnected → spawning → idle ↔ task
 Transitions:
 - `disconnected → spawning`: `spawn()` called
 - `spawning → idle`: mineflayer `spawn` event fires
-- `idle → task`: `performAction('follow' | 'guard', target)` — **only from idle**
+- `idle → task`: follow, guard, excavation, or attack — **only from idle**, after previous task cleanup
 - `task → idle`: `performAction('stop')`
 - `any → dead`: mineflayer `death` event
 - `any → disconnected`: `disconnect()` or `kicked` event
@@ -179,9 +213,16 @@ Transitions:
 
 #### Follow
 
-- Uses `mineflayer-pathfinder` `GoalFollow(playerEntity, 3)`
-- Updates goal every 1 second to track player movement
-- Stops if target player leaves the game
+- Uses a single dynamic `mineflayer-pathfinder` `GoalFollow(playerEntity, 3)` in `FollowTask`.
+- A shared one-second watchdog validates target availability and progress; it does not reset the movement goal.
+- Stops on target loss/death, unloaded chunks, distance limit, dimension change, path failure, or stalled movement. See PlayerListPanel for limits and cleanup semantics.
+
+#### Attack
+
+- Explicit player target handled by `AttackTask`, using `mineflayer-pvp` for approach and combat.
+- Equips an available sword/axe, uses the same bounded target/path checks as follow, and supports Stop.
+- Task modules use non-destructive movement, own their listeners/timers, await asynchronous startup/cleanup, and restore previous pathfinding/combat settings before new tasks are accepted.
+- Server PvP rules still apply; an accepted command is not a guarantee that damage is permitted.
 
 #### Guard
 
@@ -248,7 +289,7 @@ Transitions:
 
 ```typescript
 type BotState = 'disconnected' | 'spawning' | 'idle' | 'task' | 'dead';
-type TaskType = 'follow' | 'guard' | 'excavate' | null;
+type TaskType = 'follow' | 'guard' | 'excavate' | 'attack' | null;
 
 interface BotSessionInfo {
   sessionId: string;

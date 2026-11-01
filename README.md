@@ -185,6 +185,22 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Event log** — terminal-style stream of bot lifecycle events
 - **Auto idle timeout** — bot disconnects after 10 min of inactivity
 - **Retry logic** — reconnects on unexpected disconnect (up to 5 attempts)
+- **Player list** — click-to-load dropdown with compact Minecraft Tab-style rows: skin icons, names, health hearts, and inline action icons; available locations, ping/game mode, search, and pagination
+- **Player actions** — private whispers, follow, and confirmed attack with Stop controls; follow/attack use independent task modules with target, chunk, distance, pathfinding, and cancellation checks
+
+### Player list and task modules
+
+The roster reads Mineflayer's existing player cache; it does not query the Minecraft server or load chunks. It samples at most once every three seconds while the panel is open and the browser tab is visible, and sends only changed snapshots. Untracked players stay listed with unknown coordinates/health. Skin icons use the skin texture supplied by the server, with an initial fallback if none is available. Health is explicitly server-reported and can be hidden or altered by the server.
+
+`backend/src/players/` contains roster projection, target validation, whisper handling, and the socket adapter. `backend/src/tasks/followTask.ts` and `attackTask.ts` share task lifecycle/cleanup in `trackedPlayerTask.ts`; these runtime modules do not depend on Socket.IO. JSON-only interfaces live in `shared/playerContracts.d.ts`. This establishes migration boundaries while retaining the current in-process, socket-owned session registry; persistent workers/accounts described in `ARCHITECTURE.md` are still proposed work.
+
+Follow and attack require a currently tracked player with a loaded target chunk within 64 blocks. They do not find hidden players or navigate portals. A dynamic follow goal tracks movement without restarting its search every second. Both tasks stop on target loss/death, bot dimension change/disconnect/death, failed paths, or 30 seconds without movement progress when outside the follow radius. Their pathfinding budgets are scoped and restored after cleanup; ordinary follow/attack will not dig or pillar through terrain. Stop cleanup must finish before another task can start.
+
+Whispers use Mineflayer's `/tell` support and work for roster players outside tracking range where the server permits it. An acknowledgement means the command was submitted, not that the server delivered it. Sent/received whispers are labeled private in the dashboard; sending into the ordinary chat box remains public chat.
+
+### Verification
+
+With the Node version from `backend/.nvmrc` active, run `npm test` in `backend/` for the roster, permission/validation, follow/attack lifecycle, cancellation, and cleanup tests. These use simulated Mineflayer state; gameplay and server-specific private-message/PvP behavior still require a compatible Minecraft server. Run `npm run build` in each application for production compilation.
 
 ---
 

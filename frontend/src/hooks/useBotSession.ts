@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { BotSessionInfo, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion } from '../types';
+import { usePlayerList } from './usePlayerList';
+import { BotSessionInfo, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion, ArmorSlot, ArmorSlotId } from '../types';
 
 const BACKEND_URL = import.meta.env['VITE_BACKEND_URL'] ?? 'http://localhost:3001';
 const MAX_CHAT_MESSAGES = 200;
@@ -16,13 +17,21 @@ export function useBotSession() {
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [deployError, setDeployError] = useState<string | null>(null);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [armorItems, setArmorItems] = useState<ArmorSlot[]>([]);
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => setConnected(true));
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('disconnect', () => {
+      setConnected(false);
+      // The current backend destroys socket-owned sessions on transport loss.
+      setSessionId(null);
+      setBotInfo(null);
+      setIsDeploying(false);
+      setArmorItems([]);
+    });
 
     socket.on('bot:state', (info: BotSessionInfo) => {
       setBotInfo(info);
@@ -42,6 +51,10 @@ export function useBotSession() {
       setIsDeploying(false);
     });
 
+    socket.on('bot:armor', (slots: ArmorSlot[]) => {
+      setArmorItems(slots);
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -55,6 +68,7 @@ export function useBotSession() {
     setChatMessages([]);
     setEventLog([]);
     setBotInfo(null);
+    setArmorItems([]);
     setIsDeploying(true);
 
     socket.emit(
@@ -106,7 +120,23 @@ export function useBotSession() {
     [sessionId]
   );
 
+  const unequipArmor = useCallback(
+    (slot: ArmorSlotId) => {
+      const socket = socketRef.current;
+      if (!socket || !sessionId) return;
+      socket.emit('bot:unequip', sessionId, slot);
+    },
+    [sessionId]
+  );
+
+  const playerList = usePlayerList({
+    socket: connected ? socketRef.current : null,
+    sessionId,
+    active: botInfo?.state === 'idle' || botInfo?.state === 'task',
+  });
+
   return {
+    playerList,
     connected,
     sessionId,
     botInfo,
@@ -114,10 +144,12 @@ export function useBotSession() {
     eventLog,
     deployError,
     isDeploying,
+    armorItems,
     deployBot,
     disconnectBot,
     sendChat,
     performAction,
     excavate,
+    unequipArmor,
   };
 }

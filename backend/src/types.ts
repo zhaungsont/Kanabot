@@ -1,5 +1,15 @@
 export type BotState = 'disconnected' | 'spawning' | 'idle' | 'task' | 'dead';
-export type TaskType = 'follow' | 'guard' | 'excavate' | null;
+import type { PlayerCommand, PlayerCommandResult, PlayerListSnapshot } from '../../shared/playerContracts.js';
+export type { PlayerCommand, PlayerCommandResult, PlayerListSnapshot, ServerPlayer } from '../../shared/playerContracts.js';
+
+export type TaskType = 'follow' | 'guard' | 'excavate' | 'attack' | null;
+export type ArmorSlotId = 'head' | 'torso' | 'legs' | 'feet';
+
+export interface ArmorSlot {
+  slot: ArmorSlotId;
+  name: string | null;
+  displayName: string | null;
+}
 
 export interface ExcavateRegion {
   x1: number;
@@ -32,6 +42,8 @@ export interface ChatMessage {
   message: string;
   timestamp: number;
   isBot?: boolean;
+  channel?: 'whisper';
+  recipient?: string;
 }
 
 export interface EventLogEntry {
@@ -41,7 +53,7 @@ export interface EventLogEntry {
 }
 
 export type BotAction =
-  | { type: 'follow' | 'guard'; target: string }
+  | { type: 'follow' | 'guard' | 'attack'; target: string }
   | { type: 'stop' }
   | { type: 'excavate'; region: ExcavateRegion };
 
@@ -50,6 +62,8 @@ export interface ServerToClientEvents {
   'bot:chat': (message: ChatMessage) => void;
   'bot:event': (entry: EventLogEntry) => void;
   'bot:error': (message: string) => void;
+  'bot:armor': (slots: ArmorSlot[]) => void;
+  'bot:players': (snapshot: PlayerListSnapshot) => void;
 }
 
 export interface ClientToServerEvents {
@@ -60,6 +74,9 @@ export interface ClientToServerEvents {
   'bot:disconnect': (sessionId: string) => void;
   'bot:chat': (sessionId: string, message: string) => void;
   'bot:action': (sessionId: string, action: BotAction) => void;
+  'bot:unequip': (sessionId: string, slot: ArmorSlotId) => void;
+  'bot:players:subscribe': (sessionId: string, enabled: boolean, callback: (result: PlayerCommandResult) => void) => void;
+  'bot:playerAction': (sessionId: string, command: PlayerCommand, callback: (result: PlayerCommandResult) => void) => void;
 }
 
 export interface InterServerEvents {

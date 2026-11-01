@@ -6,6 +6,21 @@ Format: `[version] — YYYY-MM-DD`
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- Opt-in player roster with server-provided skin icons, available health/location, search/pagination, and three-second changed-only updates that pause when closed or hidden.
+- Private whisper, follow, and confirmed attack controls; private messages are labeled in the chat mirror.
+- Transport-independent roster/target/whisper modules and follow/attack tasks with scoped path budgets, chunk/distance checks, target-loss handling, and asynchronous cleanup.
+- Shared player contracts and backend regression tests (`npm test` in `backend/`).
+
+### Changed
+
+- Existing follow controls and in-game follow commands use the new follow task module.
+- Player endpoints and task commands verify current socket ownership; disconnect clears stale frontend bot state.
+- New tasks wait for previous combat/excavation cleanup; passive looking yields to active tasks.
+
 ## [0.2.0] — 2026-05-09
 
 ### Changed

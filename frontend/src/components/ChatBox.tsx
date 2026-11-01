@@ -72,7 +72,7 @@ export default function ChatBox({ messages, onSend, disabled = false }: ChatBoxP
               >
                 {msg.username}
               </span>
-              <span style={styles.msgSep}>›</span>
+              <span style={styles.msgSep}>{msg.channel === 'whisper' ? `→ ${msg.recipient ?? 'you'} (private)` : '›'}</span>
               <span
                 style={{
                   ...styles.msgText,

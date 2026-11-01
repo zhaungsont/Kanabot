@@ -8,6 +8,7 @@
 - UI color pallette: pastel style around #FFF7D1 and #FFE700. Overall give the feeling of youth & energy.
 - Tech stack: React TypeScript
 - Several ad placements for future Google Ads integration
+- Display the bot's current equipped armor in the form of a list, ordered from head, torso, pants, to boots. When a piece of armor is equipped by the bot, it should reflect on the list in realtime. The user should be able to click on the corresponding button (probably next to the list item) to make the bot un-equip and drop the item.
 
 ## Frontend Web: Landing Page
 - Display a simple link to the dashboard for now.

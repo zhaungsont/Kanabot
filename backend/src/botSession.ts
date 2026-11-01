@@ -13,17 +13,26 @@ import {
 	TaskType,
 	BotSessionInfo,
 	ExcavateRegion,
+	ArmorSlotId,
+	ArmorSlot,
+	PlayerCommand,
+	PlayerCommandResult,
+	PlayerListSnapshot,
 } from './types.js';
 import { ExcavateTask } from './tasks/excavateTask.js';
+import { FollowTask } from './tasks/followTask.js';
+import { AttackTask } from './tasks/attackTask.js';
+import type { TrackedPlayerTask, PlayerTaskOutcome } from './tasks/trackedPlayerTask.js';
+import { PlayerRoster } from './players/playerRoster.js';
+import { resolvePlayerTarget } from './players/playerTarget.js';
+import { whisperToPlayer } from './players/whisper.js';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_BASE_MS = 5000;
-const FOLLOW_RANGE = 3;
 const GUARD_FOLLOW_RANGE = 3; // stay within 3 blocks when no threat
 const GUARD_MOB_RANGE = 10; // threat detection radius around guarded player
 const GUARD_TICK_MS = 333;
-const FOLLOW_UPDATE_MS = 1000;
 
 /** Entity type names treated as hostile in the guard ability. */
 
@@ -32,6 +41,8 @@ export interface BotSessionCallbacks {
 	onEvent: (entry: EventLogEntry) => void;
 	onStateChange: () => void;
 	onDestroy: () => void;
+	onArmor: (slots: ArmorSlot[]) => void;
+	onPlayers: (snapshot: PlayerListSnapshot) => void;
 }
 
 export class BotSession {
@@ -47,7 +58,10 @@ export class BotSession {
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private guardInterval: ReturnType<typeof setInterval> | null = null;
 	private guardWeaponListener: ((collector: any) => void) | null = null;
-	private followInterval: ReturnType<typeof setInterval> | null = null;
+	private activePlayerTask: TrackedPlayerTask | null = null;
+	private playerTaskCleanup: Promise<void> | null = null;
+	private playerRoster: PlayerRoster | null = null;
+	private playersSubscribed = false;
 	private activeExcavateTask: ExcavateTask | null = null;
 	private retryCount = 0;
 	private destroyed = false;
@@ -128,6 +142,12 @@ export class BotSession {
 		// "Cannot read properties of null" if callbacks used this.bot! directly.
 		const bot = this.bot;
 		if (!bot) return;
+		this.playerRoster?.dispose();
+		this.playerRoster = new PlayerRoster(bot, (snapshot) => {
+			if (this.bot === bot && !this.destroyed) {
+				this.callbacks.onPlayers({ sessionId: this.sessionId, ...snapshot });
+			}
+		});
 
 		bot.on('spawn', () => {
 			// Stale-event guard: skip if this bot has already been replaced or destroyed.
@@ -152,22 +172,31 @@ export class BotSession {
 				);
 			} else {
 				// Respawn after death: restore active state.
-				this.emitEvent(
-					'info',
-					`Bot "${this.config.botName}" has respawned.`,
-				);
+				this.emitEvent('info', `Bot "${this.config.botName}" has respawned.`);
 				this.emitSystemChat(`Bot "${this.config.botName}" has respawned.`);
 			}
 
 			(bot as any).armorManager.equipAll();
 			this.setState('idle');
 			this.resetIdleTimer();
+			this.emitArmorUpdate(bot);
+			this.playerRoster?.setSubscribed(this.playersSubscribed);
+		});
+
+		bot.on('entityEquip', (entity: any) => {
+			console.log('in entityEquip');
+			if (this.bot !== bot || this.destroyed) return;
+			console.log('entity', entity);
+			if (entity !== bot.entity) return;
+			console.log('entityEquip', entity);
+			this.emitArmorUpdate(bot);
 		});
 
 		bot.on('physicsTick', () => {
 			if (this.bot !== bot) return;
 			try {
-				this.lookAtNearestEntity(bot);
+				// Pathfinder/combat owns looking during tasks; passive glances must not fight it.
+				if (this.state === 'idle') this.lookAtNearestEntity(bot);
 			} catch (err) {
 				if (!this.tickErrorLogged) {
 					this.tickErrorLogged = true;
@@ -188,11 +217,17 @@ export class BotSession {
 			this.handleChatCommands(username, message);
 		});
 
+		bot.on('whisper', (username: string, message: string) => {
+			if (this.bot !== bot || this.destroyed || username === this.config.botName) return;
+			this.callbacks.onChat({ username, message, timestamp: Date.now(), channel: 'whisper', recipient: this.config.botName });
+		});
+
 		bot.on('death', () => {
 			if (this.bot !== bot) return;
 			this.stopTask();
 			this.clearIdleTimer();
 			this.setState('dead');
+			this.playerRoster?.setSubscribed(false);
 			this.emitEvent('warning', `Bot "${this.config.botName}" has died.`);
 			this.emitSystemChat(`Bot "${this.config.botName}" has died.`);
 		});
@@ -255,6 +290,8 @@ export class BotSession {
 
 	private handleDisconnect(shouldRetry: boolean): void {
 		if (this.destroyed) return;
+		this.playerRoster?.dispose();
+		this.playerRoster = null;
 		this.bot = null;
 		this.setState('disconnected');
 
@@ -276,6 +313,9 @@ export class BotSession {
 
 	disconnect(): void {
 		this.stopTask();
+		this.playerRoster?.dispose();
+		this.playerRoster = null;
+		this.playersSubscribed = false;
 		this.clearIdleTimer();
 		if (this.bot) {
 			try {
@@ -312,7 +352,7 @@ export class BotSession {
 	}
 
 	performAction(
-		type: 'follow' | 'guard' | 'stop' | 'excavate',
+		type: 'follow' | 'guard' | 'stop' | 'excavate' | 'attack',
 		target?: string,
 		region?: ExcavateRegion,
 	): void {
@@ -332,6 +372,10 @@ export class BotSession {
 			);
 			return;
 		}
+		if (this.playerTaskCleanup || this.activeExcavateTask) {
+			this.emitEvent('warning', 'The previous task is still stopping. Try again shortly.');
+			return;
+		}
 
 		this.resetIdleTimer();
 
@@ -349,8 +393,9 @@ export class BotSession {
 			return;
 		}
 
-		if (type === 'follow') {
-			this.startFollow(target);
+		if (type === 'follow' || type === 'attack') {
+			const result = this.startPlayerTask(type, target);
+			if (!result.ok) this.emitEvent('warning', result.error);
 		} else {
 			this.startGuard(target);
 		}
@@ -409,47 +454,69 @@ export class BotSession {
 			});
 	}
 
-	private startFollow(playerName: string): void {
-		if (!this.bot) return;
-		const player = this.bot.players[playerName];
-		if (!player?.entity) {
-			this.emitEvent(
-				'warning',
-				`Player "${playerName}" is not visible in-game.`,
-			);
-			return;
+	setPlayersSubscribed(enabled: boolean): PlayerCommandResult {
+		if (enabled && (!this.bot || !['idle', 'task'].includes(this.state))) {
+			return { ok: false, error: 'The bot must be connected to view players.' };
 		}
+		this.playersSubscribed = enabled;
+		this.playerRoster?.setSubscribed(enabled);
+		return { ok: true };
+	}
 
-		this.currentTask = 'follow';
-		this.taskTarget = playerName;
+	performPlayerCommand(command: PlayerCommand): PlayerCommandResult {
+		if (!this.bot || this.destroyed || !['idle', 'task'].includes(this.state)) {
+			return { ok: false, error: 'The bot is not active.' };
+		}
+		if (command.type !== 'whisper') return this.startPlayerTask(command.type, command.target);
+		try {
+			const result = whisperToPlayer(this.bot, command.target, command.message);
+			if (result.ok) {
+				this.callbacks.onChat({ username: this.config.botName, message: command.message.trim(), timestamp: Date.now(), isBot: true, channel: 'whisper', recipient: command.target });
+				this.resetIdleTimer();
+			}
+			return result;
+		} catch (error) {
+			return { ok: false, error: `Could not send whisper: ${String(error)}` };
+		}
+	}
+
+	private startPlayerTask(type: 'follow' | 'attack', playerName: string): PlayerCommandResult {
+		const bot = this.bot;
+		if (!bot || this.state !== 'idle' || this.destroyed) {
+			return { ok: false, error: 'Stop the current task before starting another player task.' };
+		}
+		if (this.playerTaskCleanup || this.activeExcavateTask) return { ok: false, error: 'The previous task is still stopping. Try again shortly.' };
+		const target = resolvePlayerTarget(bot, playerName);
+		if (!target.ok) return target;
+		if (type === 'attack' && target.player.gamemode === 1) {
+			return { ok: false, error: 'Creative-mode players are invulnerable.' };
+		}
+		const onFinished = (outcome: PlayerTaskOutcome): void => {
+			if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed) return;
+			this.activePlayerTask = null;
+			this.currentTask = null;
+			this.taskTarget = null;
+			if (this.state === 'task') this.setState('idle');
+			this.emitEvent(outcome.level, outcome.message);
+			this.resetIdleTimer();
+		};
+		const task = type === 'follow'
+			? new FollowTask(bot, target.player.username, onFinished)
+			: new AttackTask(bot, target.player.username, onFinished);
+		this.activePlayerTask = task;
+		this.currentTask = type;
+		this.taskTarget = target.player.username;
 		this.setState('task');
-		this.emitEvent('info', `Now following "${playerName}".`);
-		this.emitSystemChat(`Bot acknowledged: following "${playerName}".`);
-
-		this.bot.pathfinder.setGoal(
-			new goals.GoalFollow(player.entity, FOLLOW_RANGE),
-			true,
-		);
-
-		this.followInterval = setInterval(() => {
-			if (!this.bot || this.destroyed || this.currentTask !== 'follow') {
-				this.clearFollowInterval();
-				return;
-			}
-			const p = this.bot.players[playerName];
-			if (!p?.entity) {
-				this.emitEvent(
-					'info',
-					`"${playerName}" left the game. Stopping follow.`,
-				);
-				this.stopTask();
-			} else {
-				this.bot.pathfinder.setGoal(
-					new goals.GoalFollow(p.entity, FOLLOW_RANGE),
-					true,
-				);
-			}
-		}, FOLLOW_UPDATE_MS);
+		this.resetIdleTimer();
+		try {
+			void task.start().catch(() => { /* task reports its asynchronous failure */ });
+		} catch (error) {
+			this.stopTask();
+			return { ok: false, error: `Could not start player task: ${String(error)}` };
+		}
+		this.emitEvent('info', `${type === 'follow' ? 'Following' : 'Attacking'} "${target.player.username}".`);
+		this.emitSystemChat(`Bot acknowledged: ${type} "${target.player.username}".`);
+		return { ok: true };
 	}
 
 	private startGuard(playerName: string): void {
@@ -549,7 +616,10 @@ export class BotSession {
 					const pct = Math.floor((current / total) * 100);
 					const prevPct = Math.floor(((current - 1) / total) * 100);
 					if (pct !== prevPct && pct % 10 === 0) {
-						this.emitEvent('info', `Excavation progress: ${pct}% (${current}/${total})`);
+						this.emitEvent(
+							'info',
+							`Excavation progress: ${pct}% (${current}/${total})`,
+						);
 					}
 				},
 				onComplete: () => {
@@ -582,21 +652,35 @@ export class BotSession {
 	private stopTask(): void {
 		this.clearGuardInterval();
 		this.clearGuardWeaponListener();
-		this.clearFollowInterval();
+		const playerTask = this.activePlayerTask;
+		this.activePlayerTask = null;
+		if (playerTask) {
+			const cleanup = playerTask.stop().catch((error: unknown) => {
+				this.emitEvent('warning', `Player task cleanup failed: ${String(error)}`);
+			}).finally(() => {
+				if (this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
+			});
+			this.playerTaskCleanup = cleanup;
+		}
 
 		if (this.activeExcavateTask) {
 			this.activeExcavateTask.abort();
 			// activeExcavateTask is cleared in the onAbort callback of run().
 		}
 
-		if (this.bot && this.state === 'task') {
+		if (this.bot && this.state === 'task' && !playerTask) {
 			try {
-				(this.bot as any).pvp.stop();
+				const cleanup = Promise.resolve(this.bot.pvp.stop()).catch((error: unknown) => {
+					this.emitEvent('warning', `Combat cleanup failed: ${String(error)}`);
+				}).finally(() => {
+					if (this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
+				});
+				this.playerTaskCleanup = cleanup;
 			} catch (_) {
 				/* ignore if pvp not active */
 			}
 			try {
-				this.bot.pathfinder.stop();
+				this.bot.pathfinder.setGoal(null);
 			} catch (_) {
 				/* ignore if pathfinder not active */
 			}
@@ -710,10 +794,55 @@ export class BotSession {
 		this.guardWeaponListener = null;
 	}
 
-	private clearFollowInterval(): void {
-		if (this.followInterval !== null) {
-			clearInterval(this.followInterval);
-			this.followInterval = null;
+	// ─── Armor ───────────────────────────────────────────────────────────────────
+
+	/** Inventory slot indices for each armor slot in mineflayer. */
+	private static readonly ARMOR_SLOT_INDICES: Record<ArmorSlotId, number> = {
+		head: 5,
+		torso: 6,
+		legs: 7,
+		feet: 8,
+	};
+
+	private getArmorItems(bot: Bot): ArmorSlot[] {
+		return (['head', 'torso', 'legs', 'feet'] as ArmorSlotId[]).map(
+			(slotId) => {
+				const item = bot.inventory.slots[BotSession.ARMOR_SLOT_INDICES[slotId]];
+				return {
+					slot: slotId,
+					name: item?.name ?? null,
+					displayName: item?.displayName ?? null,
+				};
+			},
+		);
+	}
+
+	private emitArmorUpdate(bot: Bot): void {
+		this.callbacks.onArmor(this.getArmorItems(bot));
+	}
+
+	async unequipAndDropArmor(slot: ArmorSlotId): Promise<void> {
+		const bot = this.bot;
+		if (!bot) return;
+
+		const slotIndex = BotSession.ARMOR_SLOT_INDICES[slot];
+		const item = bot.inventory.slots[slotIndex];
+		if (!item) return;
+
+		try {
+			await bot.unequip(slot);
+			const invItem = bot.inventory.items().find((i) => i.type === item.type);
+			if (invItem) await bot.tossStack(invItem);
+			this.emitEvent(
+				'info',
+				`Un-equipped and dropped ${item.displayName ?? item.name}.`,
+			);
+			this.emitArmorUpdate(bot);
+		} catch (err) {
+			this.emitEvent(
+				'error',
+				`Failed to drop armor: ${(err as Error).message}`,
+			);
 		}
 	}
 

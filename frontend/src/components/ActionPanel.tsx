@@ -31,6 +31,7 @@ const TASK_ICON: Record<string, string> = {
   follow: '🏃',
   guard: '🛡',
   excavate: '⛏',
+  attack: '⚔',
 };
 
 function CoordInput({

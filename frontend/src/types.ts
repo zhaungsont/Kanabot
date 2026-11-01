@@ -1,5 +1,14 @@
 export type BotState = 'disconnected' | 'spawning' | 'idle' | 'task' | 'dead';
-export type TaskType = 'follow' | 'guard' | 'excavate' | null;
+export type { PlayerCommand, PlayerCommandResult, PlayerListSnapshot, ServerPlayer } from '../../shared/playerContracts.js';
+
+export type TaskType = 'follow' | 'guard' | 'excavate' | 'attack' | null;
+export type ArmorSlotId = 'head' | 'torso' | 'legs' | 'feet';
+
+export interface ArmorSlot {
+  slot: ArmorSlotId;
+  name: string | null;
+  displayName: string | null;
+}
 
 export interface ExcavateRegion {
   x1: number;
@@ -32,6 +41,8 @@ export interface ChatMessage {
   message: string;
   timestamp: number;
   isBot?: boolean;
+  channel?: 'whisper';
+  recipient?: string;
 }
 
 export interface EventLogEntry {
@@ -41,6 +52,6 @@ export interface EventLogEntry {
 }
 
 export type BotAction =
-  | { type: 'follow' | 'guard'; target: string }
+  | { type: 'follow' | 'guard' | 'attack'; target: string }
   | { type: 'stop' }
   | { type: 'excavate'; region: ExcavateRegion };

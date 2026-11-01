@@ -4,7 +4,10 @@ import BotDeployForm from '../components/BotDeployForm';
 import ChatBox from '../components/ChatBox';
 import EventLog from '../components/EventLog';
 import ActionPanel from '../components/ActionPanel';
+import ArmorPanel from '../components/ArmorPanel';
+import PlayerListPanel from '../components/PlayerListPanel';
 import AdBanner from '../components/AdBanner';
+import './DashboardPage.css';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -15,11 +18,14 @@ export default function DashboardPage() {
     eventLog,
     deployError,
     isDeploying,
+    armorItems,
     deployBot,
     disconnectBot,
     sendChat,
     performAction,
     excavate,
+    unequipArmor,
+    playerList,
   } = useBotSession();
 
   const isActive = botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
@@ -51,7 +57,23 @@ export default function DashboardPage() {
       </header>
 
       {/* Main Content */}
-      <main style={styles.main}>
+      <main className="dashboard-main" style={styles.main}>
+        {showPanel && (
+          <div style={{ gridColumn: '1 / -1' }}>
+            <PlayerListPanel
+              enabled={playerList.enabled}
+              onEnabledChange={playerList.setEnabled}
+              active={isActive && connected}
+              idle={botInfo?.state === 'idle'}
+              visible={playerList.visible}
+              snapshot={playerList.snapshot}
+              pending={playerList.pending}
+              notice={playerList.notice}
+              onCommand={playerList.sendCommand}
+              onStop={() => performAction({ type: 'stop' })}
+            />
+          </div>
+        )}
         {/* Left Column */}
         <div style={styles.leftCol}>
           {!showPanel ? (
@@ -76,6 +98,14 @@ export default function DashboardPage() {
               <div style={styles.spinner} />
               <p>Connecting to server...</p>
             </div>
+          )}
+
+          {showPanel && (
+            <ArmorPanel
+              armorItems={armorItems}
+              onUnequip={unequipArmor}
+              disabled={!isActive}
+            />
           )}
         </div>
 
@@ -164,7 +194,6 @@ const styles: Record<string, React.CSSProperties> = {
   main: {
     flex: 1,
     display: 'grid',
-    gridTemplateColumns: 'minmax(280px, 380px) 1fr',
     gap: '1rem',
     padding: '1rem 1.5rem',
     alignItems: 'start',

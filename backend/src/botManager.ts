@@ -1,6 +1,6 @@
 import { Socket } from 'socket.io';
 import { BotSession, BotSessionCallbacks } from './botSession.js';
-import { BotConfig, ChatMessage, EventLogEntry, ServerToClientEvents, ClientToServerEvents, InterServerEvents, SocketData } from './types.js';
+import { BotConfig, ChatMessage, EventLogEntry, ArmorSlot, ServerToClientEvents, ClientToServerEvents, InterServerEvents, SocketData } from './types.js';
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
@@ -30,6 +30,8 @@ export class BotManager {
       onChat: (msg: ChatMessage) => socket.emit('bot:chat', msg),
       onEvent: (entry: EventLogEntry) => socket.emit('bot:event', entry),
       onStateChange: () => socket.emit('bot:state', session.getInfo()),
+      onArmor: (slots: ArmorSlot[]) => socket.emit('bot:armor', slots),
+      onPlayers: (snapshot) => socket.emit('bot:players', snapshot),
       onDestroy: () => {
         this.sessions.delete(sessionId);
         this.socketToSession.delete(socket.id);

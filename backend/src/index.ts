@@ -40,9 +40,11 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { BotManager } from './botManager.js';
+import { registerPlayerHandlers } from './players/playerHandlers.js';
 import {
   BotConfig,
   BotAction,
+  ArmorSlotId,
   ServerToClientEvents,
   ClientToServerEvents,
   InterServerEvents,
@@ -74,6 +76,7 @@ app.get('/health', (_req, res) => {
 
 io.on('connection', (socket) => {
   console.log(`[Socket] Connected: ${socket.id}`);
+  registerPlayerHandlers(socket, botManager);
 
   socket.on('bot:create', (config: BotConfig, callback) => {
     if (!config.serverHost) {
@@ -111,8 +114,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('bot:action', (sessionId: string, action: BotAction) => {
-    const session = botManager.getSession(sessionId);
-    if (!session) return;
+    const session = botManager.getSessionBySocketId(socket.id);
+    if (!session || session.sessionId !== sessionId) return;
 
     if (action.type === 'excavate') {
       session.performAction('excavate', undefined, action.region);
@@ -122,6 +125,13 @@ io.on('connection', (socket) => {
       session.performAction(action.type, action.target);
     }
 
+    session.resetIdleTimer();
+  });
+
+  socket.on('bot:unequip', (sessionId: string, slot: ArmorSlotId) => {
+    const session = botManager.getSession(sessionId);
+    if (!session) return;
+    session.unequipAndDropArmor(slot).catch(() => {/* already logged inside */});
     session.resetIdleTimer();
   });
 

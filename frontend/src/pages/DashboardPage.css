@@ -1,0 +1,5 @@
+.dashboard-main { grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); }
+.dashboard-main > * { min-width: 0; }
+@media (max-width: 800px) {
+  .dashboard-main { grid-template-columns: minmax(0, 1fr); }
+}
