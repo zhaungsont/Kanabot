@@ -10,47 +10,75 @@ Kanabot is a web platform that lets Minecraft players deploy, configure, and con
 
 ## Architecture
 
-```
-KANABOT/
-├── backend/                    # Node.js + TypeScript API & Bot Manager
+```text
+Kanabot/
+├── AGENTS.md                   # Repository-wide agent instructions
+├── backend/                    # Node.js + TypeScript (one process today)
 │   ├── src/
-│   │   ├── index.ts            # Express + Socket.IO server entry point
-│   │   ├── types.ts            # Shared TypeScript types
-│   │   ├── botManager.ts       # Manages all active bot sessions
-│   │   └── botSession.ts       # Individual bot: state machine, abilities, lifecycle
-│   ├── .env.example
-│   ├── .nvmrc                  # Node.js v24.15.0
-│   ├── package.json
-│   └── tsconfig.json
-│
-├── frontend/                   # React + TypeScript (Vite)
-│   ├── src/
-│   │   ├── main.tsx            # React entry point
-│   │   ├── App.tsx             # Router setup
-│   │   ├── types.ts            # Shared frontend types
-│   │   ├── index.css           # Global styles & color palette
-│   │   ├── pages/
-│   │   │   ├── LandingPage.tsx # Simple landing with link to dashboard
-│   │   │   └── DashboardPage.tsx # Main control panel
-│   │   ├── components/
-│   │   │   ├── BotDeployForm.tsx  # Deploy form (host, name, version)
-│   │   │   ├── ChatBox.tsx        # Real-time in-game chat mirror
-│   │   │   ├── EventLog.tsx       # Terminal-style event log
-│   │   │   ├── ActionPanel.tsx    # Follow / Guard / Stop controls
-│   │   │   └── AdBanner.tsx       # Ad placement placeholder
-│   │   └── hooks/
-│   │       └── useBotSession.ts   # Socket.IO state & actions hook
-│   ├── index.html
-│   ├── vite.config.ts
+│   │   ├── index.ts            # Express/Socket.IO composition + health endpoint
+│   │   ├── sessions/           # Create/resume/stop and viewer socket adapter
+│   │   ├── botManager.ts       # Stable IDs, access checks, observers, snapshots
+│   │   ├── botSession.ts       # Mineflayer lifecycle + feature orchestration
+│   │   ├── players/            # Roster, targets, whispers, player socket adapter
+│   │   ├── tasks/              # Follow/attack lifecycle and excavation
+│   │   └── types.ts            # Shared contract re-exports
+│   ├── test/                   # Regression tests + simulated Mineflayer fixtures
+│   ├── .nvmrc                  # Node.js 24.15.0
 │   └── package.json
-│
-├── legacy/                     # Previous prototype (do not reference)
-├── tmp/                        # Product briefs & feature specs
-├── run_all.sh                  # One-command local dev launcher (backend + frontend)
-├── spec.md                     # Formal technical specification
-├── CHANGELOG.md                # Version history
-└── .cursorrules
+├── frontend/                   # React + TypeScript + Vite
+│   ├── src/
+│   │   ├── pages/              # Landing page and dashboard
+│   │   ├── components/         # Deploy, player list, actions, armor, chat, log
+│   │   ├── hooks/              # React state + Socket.IO adapters
+│   │   ├── services/           # Framework-independent saved-handle storage
+│   │   └── types.ts            # Shared contract re-exports
+│   └── package.json
+├── shared/                     # JSON data, player, lifecycle, socket contracts
+├── docs/
+│   ├── README.md               # Setup and implemented architecture
+│   ├── ARCHITECTURE.md         # Target design + implemented lifecycle foundation
+│   ├── ROADMAP.md              # Local/cloud milestones
+│   ├── spec.md                 # Feature and protocol specification
+│   ├── KNOWN_ISSUES.md         # Deferred defects and architecture work
+│   └── CHANGELOG.md
+├── legacy/                     # Previous prototype, not the active application
+├── tmp/                        # Historical product briefs and notes
+└── run_all.sh                  # Local backend/frontend launcher
 ```
+
+### Current component boundaries
+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser"]
+        UI["React pages and components"]
+        Hooks["React hooks / Socket.IO client"]
+        Storage["Saved bot handle in localStorage"]
+        UI <--> Hooks
+        Hooks <--> Storage
+    end
+    subgraph Backend["One backend Node.js process"]
+        Gateway["Express health endpoint / Socket.IO adapters"]
+        Manager["BotManager: access, viewers, bounded snapshots"]
+        Session["BotSession: lifecycle and orchestration"]
+        Features["Player modules / tasks / Mineflayer plugins"]
+        Gateway <--> Manager
+        Manager <--> Session
+        Session <--> Features
+    end
+    Contracts["shared/: compile-time JSON and event contracts"]
+    MC["User's Minecraft server"]
+    Hooks <-->|"Create, resume, commands, live updates"| Gateway
+    Features <-->|"Minecraft protocol"| MC
+    Contracts -.-> Hooks
+    Contracts -.-> Gateway
+    Contracts -.-> Manager
+    Contracts -.-> Session
+```
+
+Bot execution outlives browser connections. Socket disconnect removes a viewer and its telemetry interest; **Disconnect Bot** explicitly retires execution. The manager and bot runtime are independent of Socket.IO, while the current React hooks still contain client transport logic. Common contracts define payloads; they are not a runtime message broker or validator.
+
+Sessions and recent history are currently in memory, with no database, account system, or separate worker processes. The cloud topology in [ARCHITECTURE.md](ARCHITECTURE.md) is the target design, not the current deployment.
 
 ### Data Flow
 
@@ -60,12 +88,13 @@ sequenceDiagram
     participant F as Frontend (React)
     participant B as Backend (Express + Socket.IO)
     participant MC as Minecraft Server
+    participant M as BotManager / BotSession
 
     U->>F: Fill in Server IP + Bot Name, click Deploy
     F->>F: Save stable bot handle locally
     F->>B: socket.emit('bot:create', config, handle, callback)
-    B->>B: BotManager.createSession()
-    B->>MC: mineflayer.createBot()
+    B->>M: Create once and attach authorized viewer
+    M->>MC: mineflayer.createBot()
     MC-->>B: 'spawn' event
     B-->>F: socket.emit('bot:state', { state: 'idle' })
     F-->>U: Show chat box, action panel, event log
@@ -80,7 +109,23 @@ sequenceDiagram
 
     U->>F: Click "Follow [player]"
     F->>B: socket.emit('bot:action', sessionId, { type: 'follow', target })
-    B->>MC: pathfinder.setGoal(GoalFollow)
+    B->>M: Dispatch follow command
+    M->>MC: FollowTask sets dynamic follow goal
+
+    U->>F: Navigate away or close tab
+    F-->>B: Viewer socket disconnects
+    B->>M: Detach viewer and roster interest
+    Note over M,MC: Bot continues; existing idle/task policies still apply
+
+    U->>F: Return to dashboard or refresh
+    F->>B: bot:resume(saved handle, callback)
+    B->>M: Authorize and attach new viewer
+    M-->>F: Snapshot via adapter: state, armor, bounded chat/events
+
+    U->>F: Click Disconnect Bot
+    F->>B: bot:disconnect(sessionId, callback)
+    B->>M: Retire session and cancel retries
+    M->>MC: Quit Minecraft connection
 ```
 
 ---
