@@ -7,7 +7,7 @@
 
 ## 1. Product Overview
 
-Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, provide a Minecraft server address and bot name, and the platform spawns an offline-mode Minecraft bot that can follow, guard, and chat inside the game — all controlled from the browser in real time.
+Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, provide a Minecraft server address and bot name, and the platform spawns an offline-mode Minecraft bot that can follow, protect, and chat inside the game — all controlled from the browser in real time.
 
 ---
 
@@ -83,7 +83,7 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 
 - Available when bot state is `idle` or `task`
 - **Follow** button: text input for player name → `bot:action { type: 'follow', target }`
-- **Guard** button: text input for player name → `bot:action { type: 'guard', target }`
+- **Protect** button: text input for player name → `bot:action { type: 'protect', target }`; renders backend phase/threat/readiness status
 - **Stop** button: `bot:action { type: 'stop' }` — only shown when bot is in `task` state
 - Buttons disabled when bot is in `spawning` or `dead` state
 
@@ -121,11 +121,11 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 #### PlayerRolesPanel and gameplay RBAC
 
 - A deployment-authorized dashboard panel accepts offline or online Minecraft usernames and fixed Visitor/Crew/Owner assignments. Removal restores implicit Visitor access. Assigning Owner atomically transfers the single Owner role.
-- Visitor permits follow; Crew inherits follow and adds guard/excavation; Owner inherits Crew and adds attack/stop. Web administrators use their existing separate deployment authority, not a Minecraft identity link.
+- Visitor permits follow; Crew inherits follow and adds protect/excavation; Owner inherits Crew and adds attack/stop. Web administrators use their existing separate deployment authority, not a Minecraft identity link.
 - `backend/src/access/roleCatalog.ts` defines fixed inherited role grants; `backend/src/commands/taskPermissions.ts` maps operations to permission IDs. `shared/accessContracts.d.ts` defines wire shapes. Assignment maps/revisions live in each BotSession's `PlayerRoleStore`, surviving viewer reconnect but not retirement/backend restart.
 - `BotCommandService` validates and authorizes new Minecraft commands before execution. Existing task state is unaffected by assignment changes. There are no task requester/initiator checks or role-driven preemption in RBAC.
 - `bot:access:get` and `bot:access:update` require an attached deployment viewer. Updates include username, role (or null), and expected revision; stale revisions return `CONFLICT`. `bot:access` broadcasts updated snapshots to attached viewers. Resume snapshots include access state.
-- The role hook/panel does not enable live roster sampling. Permission descriptions come from the backend. Exact chat commands include `!follow`, `!guard`, `!attack`, `!stop`, and `!dig`/`!excavate` with six validated integer coordinates.
+- The role hook/panel does not enable live roster sampling. Permission descriptions come from the backend. Exact chat commands include `!follow`, `!protect` (`!guard` alias), `!attack`, `!stop`, and `!dig`/`!excavate` with six validated integer coordinates.
 - See [BOT_OWNERSHIP_DESIGN.md](BOT_OWNERSHIP_DESIGN.md) for scope, identity limits, module boundaries, and test instructions.
 
 #### AdBanner
@@ -167,7 +167,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 - Socket.IO 4 for real-time
 - mineflayer for Minecraft bot
 - mineflayer-pathfinder for bot movement
-- mineflayer-pvp for combat (guard ability)
+- mineflayer-pvp for combat (Protect and Attack)
 - mineflayer-armor-manager for automatic armor equipping
 - mineflayer-tool for automatic optimal tool selection (excavate ability)
 
@@ -218,7 +218,7 @@ disconnected → spawning → idle ↔ task
 Transitions:
 - `disconnected → spawning`: `spawn()` called
 - `spawning → idle`: mineflayer `spawn` event fires
-- `idle → task`: follow, guard, excavation, or attack — **only from idle**, after previous task cleanup
+- `idle → task`: follow, protect, excavation, or attack — **only from idle**, after previous task cleanup
 - `task → idle`: `performAction('stop')`
 - `any → dead`: mineflayer `death` event
 - `any → disconnected`: `disconnect()` or `kicked` event
@@ -238,29 +238,20 @@ Transitions:
 - Task modules use non-destructive movement, own their listeners/timers, await asynchronous startup/cleanup, and restore previous pathfinding/combat settings before new tasks are accepted.
 - Server PvP rules still apply; an accepted command is not a guarantee that damage is permitted.
 
-#### Guard (current implementation)
+#### Protect
 
-- Runs every 333ms via `mineflayer-pvp`:
-  1. Find nearest hostile mob within **10 blocks** of the guarded player
-  2. If found: `bot.pvp.attack(mob)` — automatically approaches and attacks the target (movement included)
-  3. If none: `bot.pvp.stop()` + `GoalFollow(playerEntity, 3)` — stays within 3 blocks of the guarded player
-- Hostile mobs are detected by `entity.type === 'hostile'`
-- On guard start: automatically equips the best sword or axe from inventory (see Weapon Manager)
-- While guarding: re-evaluates and upgrades weapon whenever the bot picks up a new item
+- `ProtectTask` owns escort, engagement, return, and teardown; observer, pure selector, combat adapter, and equipment port are independent runtime modules under `backend/src/tasks/protect/`.
+- Chat: `!protect [player]` (defaults to caller). `!guard` and legacy `guard` dashboard actions normalize to Protect. Catalog version 2 grants `task.protect.start` to Crew/Owner; no separate legacy permission exists.
+- Every 333 ms, with coalesced urgent events and at least 100 ms between full scans, inspect cached entities. Initial targeting includes hostile mobs only; no server queries or chunk loads. Four candidate visibility rays maximum; nearest distance is 3D relative to the protected player.
+- Confirmed damage sources outrank proximity; missing sources remain unknown. Sustained approach and clear visibility inform deterministic priority tiers. Retain targets for one second unless a higher tier appears; same-tier switches require a target at least 25% closer.
+- Acquire within 10 blocks, retain within 16. Escort within 3. Return when bot/player separation exceeds 12; resume engagement within 5. Failed mob paths enter five-second cooldown. Failed escort paths terminate. Thirty seconds without approach/damage progress rejects a mob or terminates an unsuccessful return.
+- A wall suppresses clear-line priority but does not prove a walking route is impossible. Only the chosen target gets a bounded pursuit. PvP still supplies low-level combat; this is not a guarantee of wall-aware melee, explosion evasion, or projectile defense.
+- Held sword/axe readiness is read-only. No weapon means escort only; weapon loss interrupts combat; a usable held weapon allows recovery. Automatic equipping is separately deferred in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md). Other inventory paths are unchanged.
+- Session state includes optional `protect: ProtectStatus` (phase, player, selected threat/reason, closest distance, readiness, detail). Publish material state/target changes, not scan-by-scan positions. Dashboard loss and role changes do not terminate it.
+- Stop invalidates queued work and drains startup/combat before clearing goals/restoring settings. New tasks remain blocked until teardown settles. A ten-second cleanup deadline reports trouble without releasing ownership; unconfirmed cleanup requires deployment retirement.
+- PvP compatibility is scoped to Protect: graceful `path_stop` with a 1.5-second emergency fallback, no original plugin stop-timeout listener removal, and shield automation disabled. All leased methods/settings are restored after cleanup.
 
-#### Protect overhaul (proposed; awaiting approval)
-
-The full target specification is [PROTECT_DESIGN.md](PROTECT_DESIGN.md): a modular ProtectTask with serialized escort/combat/return states, bounded threat selection, pursuit limits, and cleanup. It includes a read-only equipment placeholder; the real selection/equipping module is deferred in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md). The current Guard implementation above remains active until implementation is approved.
-
-Initial Protect targets hostile mobs only. Its invocation permission covers all eligible defensive actions, including future player-target defense without a second RBAC check; target policies and server restrictions remain independent execution constraints.
-
-#### Weapon Manager (Guard)
-
-- Triggered on guard start and on every `playerCollect` event where the collector is the bot
-- Scans `bot.inventory.items()` for items ending in `sword` or `axe`
-- Ranks by material tier: `netherite (6) > diamond (5) > iron (4) > stone (3) > golden (2) > wooden (1)`
-- Equips the highest-scoring item to the `hand` slot via `bot.equip(item, 'hand')`
-- Listener is registered on guard start and removed on `stopTask()`
+See [PROTECT_DESIGN.md](PROTECT_DESIGN.md) for prioritization diagrams, API details, and teardown ownership. Future player defense is covered by Protect invocation authority without another RBAC check, but is not enabled initially.
 
 #### Armor Manager
 
@@ -312,7 +303,7 @@ Initial Protect targets hostile mobs only. Its invocation permission covers all 
 
 ```typescript
 type BotState = 'disconnected' | 'spawning' | 'idle' | 'task' | 'dead';
-type TaskType = 'follow' | 'guard' | 'excavate' | 'attack' | null;
+type TaskType = 'follow' | 'protect' | 'excavate' | 'attack' | null;
 
 interface BotSessionInfo {
   sessionId: string;
@@ -322,6 +313,7 @@ interface BotSessionInfo {
   taskTarget: string | null;
   spawnedAt: string | null; // ISO timestamp
   uptime: number;         // seconds since spawn
+  protect?: ProtectStatus; // shared/botContracts.d.ts
 }
 
 interface ChatMessage {

@@ -134,9 +134,9 @@ test('whispers stay labeled private in the dashboard and do not replace active t
   const { bot } = fakeBot();
   const { session, chats } = fakeSession(bot);
   session.state = 'task';
-  session.currentTask = 'guard';
+  session.currentTask = 'protect';
   assert.deepEqual(session.performPlayerCommand({ type: 'whisper', target: 'Alex', message: 'hello' }), { ok: true });
-  assert.equal(session.currentTask, 'guard');
+  assert.equal(session.currentTask, 'protect');
   assert.equal((chats[0] as { channel: string }).channel, 'whisper');
   session.disconnect();
 });

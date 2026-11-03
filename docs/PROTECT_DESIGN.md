@@ -1,6 +1,6 @@
 # Protect feature overhaul
 
-Status: proposal for detailed review; **implementation awaits approval**. Updated 2026-11-03. This is the target specification for the overhaul; [spec.md](spec.md) describes the currently implemented Guard behavior. Automatic equipment selection/equipping is excluded from the first implementation and specified separately in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md).
+Status: **implemented local runtime**, 2026-11-04; simulated regression coverage is in `backend/test/protect.test.ts`. Real-server/version acceptance and mass-volume performance measurements remain outstanding. [spec.md](spec.md) describes the current behavior. Automatic equipment selection/equipping is excluded from the first implementation and specified separately in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md).
 
 ## 1. Product scope and authority
 
@@ -77,7 +77,7 @@ Entity death/gone may arrive more than once or overlap Stop/disconnect. Cleanup 
 1. Mark the task stopping and increment/invalidate its generation **before awaiting anything**. Abort its signal, prevent new evaluations/transitions, and reject pending requests to acquire its resources.
 2. Cancel scheduled decision/reconciliation intervals, urgent reevaluation/debounce callbacks, retry/backoff timers, progress-watchdog timers, target-commit timers if implemented, and task-owned operation deadlines. Drop queued transition intents. In-flight callbacks still verify the generation before any side effect.
 3. Detach task-owned observation listeners using their original function references: `entityHurt`, `entityDead`, `entityGone`, `entityMoved` (and spawn/update events only if used), `playerLeft`, `game`, `death`, `end`, and placeholder `heldItemChanged`. Also remove task-owned world/chunk/block listeners if the observation adapter subscribes to them. Do not remove Mineflayer's core listeners or another feature's listeners.
-4. Drain the serialized transition/startup operation while its aborted state prevents new attacks or goals. Finish the combat adapter's `bot.pvp.stop()` on the captured bot. Keep the adapter's scoped completion listeners/deadlines alive until that operation settles; do not clear the mechanism needed to finish cleanup in step 2. Only then clear the task's pathfinder goal and any task-owned movement controls. `clearControlStates()` is permitted only while Protect exclusively owns those controls. On an already-ended bot, skip unsupported calls and still finish local disposal.
+4. Drain the serialized transition/startup operation while its aborted state prevents new attacks or goals. Finish the combat adapter's scoped stop operation on the captured bot. Keep the adapter's scoped completion listeners/deadlines alive until that operation settles; do not clear the mechanism needed to finish cleanup in step 2. Only then clear the task's pathfinder goal and any task-owned movement controls. `clearControlStates()` is permitted only while Protect exclusively owns those controls. On an already-ended bot, skip unsupported calls and still finish local disposal.
 5. Call the equipment port's unsubscribe and `release(taskGeneration)`. The placeholder performs no inventory cleanup or writes. A future real module must drain/cancel its own owned operation before confirming release; an already-sent server action may complete and must not trigger follow-up combat after cancellation.
 6. Remove adapter-specific PvP/pathfinder listeners (`startedAttacking`, `stoppedAttacking`, `attackedTarget`, `path_update`, `path_reset`, and transient `path_stop` listeners where actually acquired). Remove only owned listeners, after their pending operations settle. Observe the installed plugin's cleanup limitations described below.
 7. Restore all settings changed by Protect on the same owned bot: pathfinder movements and search/time budgets; PvP movements, follow/view/attack ranges, and timing policy **only if changed**. Maintain an explicit snapshot of changed settings. Restoring settings or clearing goals must never touch a newer bot instance or controller.
@@ -91,6 +91,17 @@ Avoid self-await deadlocks: a transition reporting terminal failure must unwind 
 **Timeouts do not prove cancellation.** An outer deadline may report cleanup trouble, but a still-running plugin promise can clear a later goal. Do not release resource ownership or start a successor merely because `Promise.race` timed out. Track/drain plugin-owned stop work as well as application work. Emergency force-stop must be tested with the installed plugin's outstanding timeout behavior; it is not sufficient by itself to prove that a delayed normal stop cannot fire. If quiescence cannot be established, expose a cleanup-failed/stopping state and block conflicting tasks until the runtime has safely ended or an explicitly tested recovery completes. Do not allow an indefinite hidden hang: emit the failure/deadline status and provide deployment retirement as recovery.
 
 The installed plugin's broad removal of `path_stop` listeners on timeout is a compatibility concern. Before implementation is considered complete, either prove a safe integration under the task lease or obtain approval for a dependency fix. Application disposers cannot undo listeners already deleted by a plugin. These requirements apply to terminal teardown and ordinary combat-to-follow handoffs.
+
+
+### Installed-plugin integration and concrete defaults
+
+The implementation lives under `backend/src/tasks/protect/`. `BotSession` supplies the exclusive task/cleanup gate; no sockets, role checks, or scheduler calls exist in the threat/combat loop. The observer keeps cached entity-reference evidence and monotonic distance samples; its bounded four-element shortlist is maintained in O(N), without sorting all entities. Visibility uses sync-world raycast's default exact collision-shape intersection and a conservative loaded-column bounding-rectangle precheck. The rectangle may report unknown when an extra neighboring column is absent; it never triggers a load. Closest-distance diagnostics are rounded and included on material status changes rather than streamed each scan.
+
+`ProtectCombatAdapter` leases the installed PvP instance's `stop`, movement policy, and `hasShield` hook. All internal PvP stop calls (including entity loss and attack handoffs) use its scoped stop method. It registers `path_stop` before requesting `pathfinder.stop()`, then finalizes a stopped path using public `forceStop()`. If no completion arrives within 1.5 seconds, emergency `forceStop()` clears the owned goal. This fallback can interrupt a jump. The original PvP stop method is never entered during this lease, so its five-second timer and broad listener removal cannot run late. The adapter drains outstanding stop/start work before restoring the exact methods/settings; unrelated `path_stop` listeners remain installed. This is an instance-scoped compatibility shim, not a dependency patch. Compatibility tests exercise installed PvP 1.3.2 methods; rerun/review them on plugin upgrades.
+
+The scoped `hasShield` hook returns false to disable this plugin version's fixed-index creeper logic and delayed shield writes. Protect therefore promises no shield or explosion tactics. This private hook is an explicit compatibility dependency. Other PvP reach/range/timing settings remain unchanged. Automatic equipping remains unimplemented.
+
+Progress timeout is 30 seconds: escorting within three blocks is healthy; combat requires measurable approach or actual hurt events on the selected mob. Mere proximity across a wall does not reset the watchdog. A stalled mob enters five-second exclusion; an unsuccessful escort/return terminates. A ten-second teardown deadline publishes cleanup trouble without releasing the session's lease; delayed operations remain tracked, and failed cleanup blocks successors until deployment retirement. Explicit stop and automatic safety stop each publish one terminal outcome after successful cleanup.
 
 ## 4. Target validity, leash, and recovery
 
@@ -244,7 +255,7 @@ Manual/current equipment is therefore required for combat in this first version.
 
 Use a 333 ms bounded reconciliation loop plus coalesced urgent reevaluation for damage, target loss, and held-item loss. Movement events only mark state dirty; they must not launch overlapping loops. Bound evaluations, raycasts, evidence history, retries, and transition work. Continue runtime evaluation even with no dashboard viewers; player-list telemetry remains independently lazy.
 
-The current Guard loop already checks distances every 333 ms. The overhaul's substantial gains are evidence-based prioritization, stable target retention, bounded escort/chase recovery, exclusive movement ownership, and explicit teardown—not a faster timer or a new distance formula. The richer decision pass may cost more CPU than nearest-mob selection; shortlist/scan limits and measurements must justify that cost. Smoother or safer real combat remains an acceptance-test goal until implementation and supported-server verification are complete.
+The previous Guard loop already checked distances every 333 ms. The overhaul's substantial gains are evidence-based prioritization, stable target retention, bounded escort/chase recovery, exclusive movement ownership, and explicit teardown. The richer decision pass may cost more CPU than nearest-mob selection; shortlist/scan limits and measurements must justify that cost. Smoother or safer real combat remains an acceptance-test goal until supported-server verification is complete.
 
 Expose structured Protect state, protected player, selected threat, selection reason/confidence, degraded equipment status, and task outcome. Send/log state changes and material target changes, not every scan. A future dashboard can render these without importing task classes or scoring rules. No database, model call, or network round trip belongs in the reaction loop.
 
@@ -254,9 +265,9 @@ Research used upstream documentation and the installed dependencies (`mineflayer
 
 Prototype and test combat handoff, equipment-loss handling, and cleanup against the installed packages before finalizing the adapter. Reuse the existing APIs first; a new combat dependency or uploaded plugin system is not a prerequisite.
 
-## 10. Implementation and acceptance after approval
+## 10. Implementation and acceptance
 
-The approved scope would include rename/aliases, RBAC mapping migration, ProtectTask and state machine, threat observations/scoring, leash/recovery, combat adapter, the read-only equipment placeholder, structured state, and tests. It excludes the real equipment module and player-threat selection.
+The implemented scope includes rename/aliases, RBAC mapping migration, ProtectTask and state machine, threat observations/scoring, leash/recovery, combat adapter, the read-only equipment placeholder, structured state, and tests. It excludes the real equipment module and player-threat selection.
 
 Acceptance scenarios:
 

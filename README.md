@@ -25,7 +25,7 @@ Kanabot/
 │   │   ├── botManager.ts       # Stable IDs, access checks, observers, snapshots
 │   │   ├── botSession.ts       # Mineflayer lifecycle + feature orchestration
 │   │   ├── players/            # Roster, targets, whispers, player socket adapter
-│   │   ├── tasks/              # Follow/attack lifecycle and excavation
+│   │   ├── tasks/              # Follow/attack/excavation + modular protect/ runtime
 │   │   └── types.ts            # Shared contract re-exports
 │   ├── test/                   # Regression tests + simulated Mineflayer fixtures
 │   ├── .nvmrc                  # Node.js 24.15.0
@@ -65,15 +65,22 @@ flowchart LR
         Gateway["Express health endpoint / Socket.IO adapters"]
         Manager["BotManager: access, viewers, bounded snapshots"]
         Session["BotSession: lifecycle and orchestration"]
-        Features["Player modules / tasks / Mineflayer plugins"]
+        Features["Player modules / follow, attack, excavation tasks"]
+        Protect["ProtectTask: serialized escort / combat / return"]
+        Threats["Threat observer / pure selector"]
+        Combat["Scoped PvP adapter / read-only equipment port"]
         Gateway <--> Manager
         Manager <--> Session
         Session <--> Features
+        Session <--> Protect
+        Protect --> Threats
+        Protect --> Combat
     end
     Contracts["shared/: compile-time JSON and event contracts"]
     MC["User's Minecraft server"]
     Hooks <-->|"Create, resume, commands, live updates"| Gateway
     Features <-->|"Minecraft protocol"| MC
+    Combat <-->|"Mineflayer / pathfinder / PvP"| MC
     Contracts -.-> Hooks
     Contracts -.-> Gateway
     Contracts -.-> Manager
@@ -150,7 +157,7 @@ disconnected ──spawn──► spawning ──success──► idle ◄──
 - `disconnected` — no active connection to Minecraft server
 - `spawning` — attempting to connect
 - `idle` — connected, waiting for instructions
-- `task` — executing `follow` or `guard` (only one task at a time)
+- `task` — executing `follow`, `protect`, `attack`, or `excavate` (only one task at a time)
 - `dead` — bot was killed in-game (auto-reconnect attempted)
 
 ---
@@ -228,8 +235,8 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Deploy bot** to any offline-mode Minecraft server
 - **Real-time chat** — mirror in-game chat; send messages from browser
 - **Follow** — bot follows a specified player, staying within 3 blocks
-- **Guard** — bot protects a player: attacks hostile mobs within 10 blocks via `mineflayer-pvp`, otherwise shadows them within 3 blocks
-- **Weapon auto-equip** — on guard start, bot equips the best sword or axe from inventory; upgrades automatically when a better weapon is picked up
+- **Protect** — escorts within 3 blocks, prioritizes supported hostile mobs around the player using damage evidence/proximity/visibility, and returns when separated by more than 12 blocks. Bounded decisions, target retention, path-failure cooldowns, and serialized cleanup live in independent runtime modules. `!guard` and legacy dashboard actions remain aliases.
+- **Protect equipment placeholder** — melee requires an already-held sword/axe. No automatic selection/equipping is performed; losing the held weapon resumes escort-only behavior. The dashboard shows readiness and task state. Standalone Attack and existing armor/tool behavior are unchanged. See [Protect design](docs/PROTECT_DESIGN.md) and [equipment follow-up](docs/EQUIPMENT_DESIGN.md).
 - **Armor auto-equip** — on spawn, bot equips the best available armor via `mineflayer-armor-manager`
 - **Stop** — cancel current task, return to idle
 - **Event log** — terminal-style stream of bot lifecycle events
@@ -237,7 +244,7 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Retry logic** — reconnects on unexpected disconnect (up to 5 attempts)
 - **Player list** — click-to-load dropdown with compact Minecraft Tab-style rows: skin icons, names, health hearts, and inline action icons; available locations, ping/game mode, search, and pagination
 - **Player actions** — private whispers, follow, and confirmed attack with Stop controls; follow/attack use independent task modules with target, chunk, distance, pathfinding, and cancellation checks
-- **Player roles** — assign usernames Visitor, Crew, or Owner on the dashboard, independently of the live roster. Visitor may follow; Crew adds guard/excavation; Owner adds attack/stop. Changes affect new commands while existing tasks continue.
+- **Player roles** — assign usernames Visitor, Crew, or Owner on the dashboard, independently of the live roster. Visitor may follow; Crew adds protect/excavation; Owner adds attack/stop. Changes affect new commands while existing tasks continue.
 
 Roles and inherited grants are defined in `backend/src/access/roleCatalog.ts`; task-to-permission mappings are in `backend/src/commands/taskPermissions.ts`. Assignments are held in memory by `PlayerRoleStore` for each bot session and survive browser refresh, but not bot retirement or backend restart. Dashboard administrators remain independent of Minecraft player roles.
 

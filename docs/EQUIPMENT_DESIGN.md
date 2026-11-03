@@ -1,10 +1,10 @@
 # Equipment module follow-up
 
-Status: documented future work; **do not implement automatic equipping as part of the initial Protect overhaul**. Updated 2026-11-03. Protect receives only the interface and read-only placeholder below. See [PROTECT_DESIGN.md](PROTECT_DESIGN.md).
+Status: documented future work; **do not implement automatic equipping as part of the initial Protect overhaul**. Updated 2026-11-04. The initial placeholder is implemented in `backend/src/tasks/protect/equipment.ts`. Protect receives only the interface and read-only placeholder below. See [PROTECT_DESIGN.md](PROTECT_DESIGN.md).
 
 ## 1. Current gaps
 
-Guard selects a sword/axe by material tier at startup and on collection. Attack has a separate selector; excavation uses the tool plugin; armor is managed through another plugin and manual drop controls. These paths have no common inventory-operation coordinator. Guard does not reliably react to breakage/replacement and selection ignores enchantments, combat timing, and durability.
+Protect now reads only the held weapon, replacing Guard's startup/collection selector. Attack retains a separate selector; excavation uses the tool plugin; armor is managed through another plugin and manual drop controls. These paths have no common inventory-operation coordinator. The old Guard selector did not reliably react to breakage/replacement and selection ignores enchantments, combat timing, and durability.
 
 Existing armor update/drop defects are tracked as KI-006/KI-007; asynchronous tool cancellation as KI-002 in [KNOWN_ISSUES.md](KNOWN_ISSUES.md). This document records their relationship to equipment work without authorizing those fixes now.
 

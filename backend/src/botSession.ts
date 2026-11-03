@@ -1,6 +1,6 @@
 import mineflayer, { Bot } from 'mineflayer';
 import pkg from 'mineflayer-pathfinder';
-const { pathfinder, Movements, goals } = pkg;
+const { pathfinder, Movements } = pkg;
 import pvpPkg from 'mineflayer-pvp';
 const pvp = (pvpPkg as any).plugin;
 import armorManager from 'mineflayer-armor-manager';
@@ -22,6 +22,8 @@ import {
 import { ExcavateTask } from './tasks/excavateTask.js';
 import { FollowTask } from './tasks/followTask.js';
 import { AttackTask } from './tasks/attackTask.js';
+import { ProtectTask } from './tasks/protect/protectTask.js';
+import type { ProtectStatus } from '../../shared/botContracts.js';
 import type { TrackedPlayerTask, PlayerTaskOutcome } from './tasks/trackedPlayerTask.js';
 import { PlayerRoster } from './players/playerRoster.js';
 import { resolvePlayerTarget } from './players/playerTarget.js';
@@ -36,11 +38,6 @@ import type { PlayerAccessSnapshot, PlayerAccessResult } from '../../shared/acce
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_BASE_MS = 5000;
-const GUARD_FOLLOW_RANGE = 3; // stay within 3 blocks when no threat
-const GUARD_MOB_RANGE = 10; // threat detection radius around guarded player
-const GUARD_TICK_MS = 333;
-
-/** Entity type names treated as hostile in the guard ability. */
 
 export interface BotSessionCallbacks {
 	onAccess?: (snapshot: PlayerAccessSnapshot) => void;
@@ -64,9 +61,8 @@ export class BotSession {
 	private bot: Bot | null = null;
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private retryTimer: ReturnType<typeof setTimeout> | null = null;
-	private guardInterval: ReturnType<typeof setInterval> | null = null;
-	private guardWeaponListener: ((collector: any) => void) | null = null;
-	private activePlayerTask: TrackedPlayerTask | null = null;
+	private protectStatus: ProtectStatus | undefined;
+	private activePlayerTask: TrackedPlayerTask | ProtectTask | null = null;
 	private playerTaskCleanup: Promise<void> | null = null;
 	private playerRoster: PlayerRoster | null = null;
 	private playersSubscribed = false;
@@ -107,6 +103,7 @@ export class BotSession {
 			taskTarget: this.taskTarget,
 			spawnedAt: this.spawnedAt?.toISOString() ?? null,
 			uptime: this.uptime,
+			protect: this.protectStatus,
 		};
 	}
 
@@ -392,7 +389,7 @@ export class BotSession {
 		if (!this.bot || this.destroyed || !['idle', 'task'].includes(this.state)) return { ok: false, error: 'The bot is not active.' };
 		if (action.type === 'stop') {
 			this.stopTask();
-			this.emitEvent('info', 'Task stopped. Bot is idle.');
+			this.emitEvent('info', 'Task stop requested.');
 			this.resetIdleTimer();
 			return { ok: true };
 		}
@@ -407,10 +404,7 @@ export class BotSession {
 			return { ok: true };
 		}
 		if (action.type === 'follow' || action.type === 'attack') return this.startPlayerTask(action.type, action.target);
-		if (!this.bot.players[action.target]?.entity) return { ok: false, error: `Player "${action.target}" is not visible in-game.` };
-		this.startGuard(action.target);
-		this.resetIdleTimer();
-		return { ok: true };
+		return this.startPlayerTask('protect', action.target);
 	}
 
 	// ─── Abilities ───────────────────────────────────────────────────────────────
@@ -424,48 +418,6 @@ export class BotSession {
 		if (!target) return;
 		bot.lookAt(target.position.offset(0, target.height * 0.9, 0));
 	}
-
-	/** Equips the highest-tier sword or axe found in the bot's inventory. */
-	private equipBestWeapon(): void {
-		if (!this.bot) return;
-
-		const TIERS: Record<string, number> = {
-			netherite: 6,
-			diamond: 5,
-			iron: 4,
-			stone: 3,
-			golden: 2,
-			wooden: 1,
-			wood: 1,
-		};
-
-		let bestItem = null;
-		let bestScore = -1;
-
-		for (const item of this.bot.inventory.items()) {
-			const name = item.name; // e.g. "diamond_sword", "iron_axe"
-			if (!name.endsWith('sword') && !name.endsWith('axe')) continue;
-			const material = Object.keys(TIERS).find((m) => name.startsWith(m));
-			if (!material) continue;
-			const score = TIERS[material];
-			if (score > bestScore) {
-				bestScore = score;
-				bestItem = item;
-			}
-		}
-
-		if (!bestItem) return;
-
-		this.bot
-			.equip(bestItem, 'hand')
-			.then(() => {
-				this.emitEvent('info', `Equipped ${bestItem!.name} for combat.`);
-			})
-			.catch(() => {
-				/* item may have moved */
-			});
-	}
-
 	setPlayersSubscribed(enabled: boolean): PlayerCommandResult {
 		if (enabled && (!this.bot || !['idle', 'task'].includes(this.state))) {
 			return { ok: false, error: 'The bot must be connected to view players.' };
@@ -492,7 +444,7 @@ export class BotSession {
 		}
 	}
 
-	private startPlayerTask(type: 'follow' | 'attack', playerName: string): PlayerCommandResult {
+	private startPlayerTask(type: 'follow' | 'attack' | 'protect', playerName: string): PlayerCommandResult {
 		const bot = this.bot;
 		if (!bot || this.state !== 'idle' || this.destroyed) {
 			return { ok: false, error: 'Stop the current task before starting another player task.' };
@@ -506,6 +458,7 @@ export class BotSession {
 		const onFinished = (outcome: PlayerTaskOutcome): void => {
 			if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed) return;
 			this.activePlayerTask = null;
+			this.protectStatus = undefined;
 			this.currentTask = null;
 			this.taskTarget = null;
 			if (this.state === 'task') this.setState('idle');
@@ -514,7 +467,12 @@ export class BotSession {
 		};
 		const task = type === 'follow'
 			? new FollowTask(bot, target.player.username, onFinished)
-			: new AttackTask(bot, target.player.username, onFinished);
+			: type === 'attack' ? new AttackTask(bot, target.player.username, onFinished)
+			: new ProtectTask(bot, target.player.username, onFinished, (status) => {
+				if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed) return;
+				this.protectStatus = status;
+				this.callbacks.onStateChange();
+			});
 		this.activePlayerTask = task;
 		this.currentTask = type;
 		this.taskTarget = target.player.username;
@@ -526,77 +484,9 @@ export class BotSession {
 			this.stopTask();
 			return { ok: false, error: `Could not start player task: ${String(error)}` };
 		}
-		this.emitEvent('info', `${type === 'follow' ? 'Following' : 'Attacking'} "${target.player.username}".`);
+		this.emitEvent('info', `${type === 'follow' ? 'Following' : type === 'protect' ? 'Protecting' : 'Attacking'} "${target.player.username}".`);
 		this.emitSystemChat(`Bot acknowledged: ${type} "${target.player.username}".`);
 		return { ok: true };
-	}
-
-	private startGuard(playerName: string): void {
-		if (!this.bot) return;
-		const player = this.bot.players[playerName];
-		if (!player?.entity) {
-			this.emitEvent(
-				'warning',
-				`Player "${playerName}" is not visible in-game.`,
-			);
-			return;
-		}
-
-		this.currentTask = 'guard';
-		this.taskTarget = playerName;
-		this.setState('task');
-		this.emitEvent('info', `Now guarding "${playerName}".`);
-		this.emitSystemChat(`Bot acknowledged: guarding "${playerName}".`);
-
-		this.equipBestWeapon();
-
-		// Re-equip whenever the bot picks up a new item in case it's a better weapon
-		this.guardWeaponListener = (collector: any) => {
-			if (!this.bot || collector !== this.bot.entity) return;
-			this.equipBestWeapon();
-		};
-		this.bot.on('playerCollect', this.guardWeaponListener);
-
-		const botPvp = (this.bot as any).pvp;
-
-		this.guardInterval = setInterval(() => {
-			if (!this.bot || this.destroyed || this.currentTask !== 'guard') return;
-
-			const guardedPlayer = this.bot.players[playerName];
-			if (!guardedPlayer?.entity) {
-				this.emitEvent(
-					'info',
-					`"${playerName}" left the game. Stopping guard.`,
-				);
-				this.stopTask();
-				return;
-			}
-
-			const playerPos = guardedPlayer.entity.position;
-			let nearestMob = null;
-			let minDist = GUARD_MOB_RANGE;
-
-			for (const entity of Object.values(this.bot.entities)) {
-				if (!entity || entity.type !== 'hostile') continue;
-				const dist = entity.position.distanceTo(playerPos);
-				if (dist < minDist) {
-					minDist = dist;
-					nearestMob = entity;
-				}
-			}
-
-			if (nearestMob) {
-				// pvp.attack handles pathfinding toward the target and attacking it
-				botPvp.attack(nearestMob);
-			} else {
-				// No threat nearby — stop any active pvp chase and shadow the player
-				botPvp.stop();
-				this.bot.pathfinder.setGoal(
-					new goals.GoalFollow(guardedPlayer.entity, GUARD_FOLLOW_RANGE),
-					true,
-				);
-			}
-		}, GUARD_TICK_MS);
 	}
 
 	private startExcavate(region: ExcavateRegion): void {
@@ -662,9 +552,26 @@ export class BotSession {
 	}
 
 	private stopTask(): void {
-		this.clearGuardInterval();
-		this.clearGuardWeaponListener();
 		const playerTask = this.activePlayerTask;
+		if (playerTask instanceof ProtectTask) {
+			if (this.playerTaskCleanup) return;
+			const cleanup = playerTask.stop().then(() => {
+				if (this.activePlayerTask !== playerTask) return;
+				this.activePlayerTask = null;
+				this.protectStatus = undefined;
+				this.currentTask = null;
+				this.taskTarget = null;
+				if (this.state === 'task') this.setState('idle');
+				this.resetIdleTimer();
+			}, (error: unknown) => {
+				this.emitEvent('error', `Protect cleanup failed; retire this deployment: ${String(error)}`);
+			}).then(() => {
+				// Failed cleanup keeps both the task and lease, blocking successors.
+				if (this.activePlayerTask !== playerTask && this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
+			});
+			this.playerTaskCleanup = cleanup;
+			return;
+		}
 		this.activePlayerTask = null;
 		if (playerTask) {
 			const cleanup = playerTask.stop().catch((error: unknown) => {
@@ -766,20 +673,6 @@ export class BotSession {
 	private clearRetryTimer(): void {
 		if (this.retryTimer !== null) clearTimeout(this.retryTimer);
 		this.retryTimer = null;
-	}
-
-	private clearGuardInterval(): void {
-		if (this.guardInterval !== null) {
-			clearInterval(this.guardInterval);
-			this.guardInterval = null;
-		}
-	}
-
-	private clearGuardWeaponListener(): void {
-		if (this.guardWeaponListener && this.bot) {
-			this.bot.removeListener('playerCollect', this.guardWeaponListener);
-		}
-		this.guardWeaponListener = null;
 	}
 
 	// ─── Armor ───────────────────────────────────────────────────────────────────

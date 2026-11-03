@@ -1,5 +1,5 @@
 export type PlayerRole = 'visitor' | 'crew' | 'owner';
-export type GameplayPermission = 'task.follow.start' | 'task.guard.start' | 'task.excavate.start' | 'task.attack.start' | 'task.stop';
+export type GameplayPermission = 'task.follow.start' | 'task.protect.start' | 'task.excavate.start' | 'task.attack.start' | 'task.stop';
 export interface RoleDescription { id: PlayerRole; label: string; permissions: GameplayPermission[]; }
 export interface PlayerRoleAssignment { username: string; role: PlayerRole; }
 export interface PlayerAccessSnapshot {

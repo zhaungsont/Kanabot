@@ -1,9 +1,9 @@
 import type { GameplayPermission, PlayerRole, RoleDescription } from '../../../shared/accessContracts.js';
 
-export const CATALOG_VERSION = 1;
+export const CATALOG_VERSION = 2;
 // Fixed product policy. Users edit assignments, never these definitions.
 const visitor: readonly GameplayPermission[] = ['task.follow.start'];
-const crew: readonly GameplayPermission[] = [...visitor, 'task.guard.start', 'task.excavate.start'];
+const crew: readonly GameplayPermission[] = [...visitor, 'task.protect.start', 'task.excavate.start'];
 const owner: readonly GameplayPermission[] = [...crew, 'task.attack.start', 'task.stop'];
 const catalog: Readonly<Record<PlayerRole, readonly GameplayPermission[]>> = { visitor, crew, owner };
 

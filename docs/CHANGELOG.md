@@ -8,6 +8,14 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Protect implementation — 2026-11-04
+
+- Added modular ProtectTask, cached threat observations, deterministic urgency/retention, bounded chase/return behavior, and structured dashboard status. Hostile mobs only; `!guard` and legacy actions remain compatibility aliases.
+- Canonical `task.protect.start` replaces the old grant at role catalog version 2, preserving Crew/Owner authority. Task execution remains independent of RBAC, sockets, and dashboard visibility.
+- Added read-only held-weapon readiness. Protect requires an already-held sword/axe for melee; weapon loss interrupts combat and keeps escorting. Automatic weapon selection/equipping remains deferred.
+- Scoped PvP compatibility prevents stop-timeout listener deletion and late goal clearing; graceful handoffs have a bounded fallback. Shield automation is disabled during Protect because this plugin version uses fixed metadata and delayed inventory actions.
+- Teardown drains owned work and restores settings/listeners before accepting successors. Cleanup trouble is visible and keeps the lease blocked; regression coverage includes installed PvP methods with simulated bots. Real-server combat and load verification remain outstanding.
+
 ### Design proposals
 
 - Added Protect target-prioritization flowchart and explicit continuous scan/coalescing cadence; clarified which improvements go beyond the existing 333 ms nearest-mob loop. Documentation only.

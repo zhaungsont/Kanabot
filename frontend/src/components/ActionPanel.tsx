@@ -29,7 +29,7 @@ function useUptime(spawnedAt: string | null): string {
 
 const TASK_ICON: Record<string, string> = {
   follow: '🏃',
-  guard: '🛡',
+  protect: '🛡',
   excavate: '⛏',
   attack: '⚔',
 };
@@ -62,7 +62,7 @@ function CoordInput({
 
 export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnect }: ActionPanelProps) {
   const [followTarget, setFollowTarget] = useState('');
-  const [guardTarget, setGuardTarget] = useState('');
+  const [protectTarget, setProtectTarget] = useState('');
   const [dig, setDig] = useState({ x1: '', y1: '', z1: '', x2: '', y2: '', z2: '' });
   const uptime = useUptime(botInfo.spawnedAt);
 
@@ -75,9 +75,9 @@ export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnec
     onAction({ type: 'follow', target: followTarget.trim() });
   };
 
-  const handleGuard = () => {
-    if (!guardTarget.trim()) return;
-    onAction({ type: 'guard', target: guardTarget.trim() });
+  const handleProtect = () => {
+    if (!protectTarget.trim()) return;
+    onAction({ type: 'protect', target: protectTarget.trim() });
   };
 
   const digCoords = [dig.x1, dig.y1, dig.z1, dig.x2, dig.y2, dig.z2].map(Number);
@@ -118,6 +118,14 @@ export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnec
         </span>
       </div>
 
+      {botInfo.protect && (
+        <div role="status" style={styles.infoChip}>
+          <strong>Protect: {botInfo.protect.phase}</strong>
+          {botInfo.protect.threat && <div>{botInfo.protect.threat.name}: {botInfo.protect.threat.reason}</div>}
+          <div>{botInfo.protect.detail}</div>
+        </div>
+      )}
+
       {/* Actions */}
       <div style={styles.actions}>
 
@@ -143,25 +151,25 @@ export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnec
           </button>
         </div>
 
-        {/* Guard */}
+        {/* Protect */}
         <div style={styles.actionGroup}>
           <label style={styles.actionLabel}>
-            <span>🛡 Guard Player</span>
+            <span>🛡 Protect Player</span>
             <input
               style={styles.actionInput}
               type="text"
               placeholder="Player name"
-              value={guardTarget}
-              onChange={(e) => setGuardTarget(e.target.value)}
+              value={protectTarget}
+              onChange={(e) => setProtectTarget(e.target.value)}
               disabled={!isIdle}
             />
           </label>
           <button
             style={{ ...styles.actionBtn, background: '#2196F3', color: '#fff' }}
-            onClick={handleGuard}
-            disabled={!isIdle || !guardTarget.trim()}
+            onClick={handleProtect}
+            disabled={!isIdle || !protectTarget.trim()}
           >
-            Guard
+            Protect
           </button>
         </div>
 

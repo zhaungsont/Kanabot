@@ -9,7 +9,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for system boundaries and [KNOWN_ISSUES.m
 Every valid Minecraft username has one effective role per bot:
 
 - **Visitor**: implicit default, may request follow.
-- **Crew**: inherits Visitor and adds guard and bounded excavation.
+- **Crew**: inherits Visitor and adds protect and bounded excavation.
 - **Owner**: inherits Crew and adds attack and stop-current-task.
 
 The application defines all roles and permissions. Deployment administrators can assign or remove a player's role on the dashboard; they cannot change role definitions or permission thresholds. Names are case-insensitive, and offline names can be assigned without opening the live player roster. Removing an assignment restores Visitor access.
@@ -32,7 +32,7 @@ A web administrator need not have a Minecraft identity. Assigning Steve123 as Ow
 | File | Responsibility |
 | --- | --- |
 | [`backend/src/access/roleCatalog.ts`](../backend/src/access/roleCatalog.ts) | Fixed role IDs, labels, direct/inherited permission grants, catalog version, username normalization |
-| [`backend/src/commands/taskPermissions.ts`](../backend/src/commands/taskPermissions.ts) | Maps follow/guard/excavate/attack/stop operations to named permission IDs |
+| [`backend/src/commands/taskPermissions.ts`](../backend/src/commands/taskPermissions.ts) | Maps follow/protect/excavate/attack/stop operations to named permission IDs |
 | [`shared/accessContracts.d.ts`](../shared/accessContracts.d.ts) | Shared compile-time role/permission IDs, assignment snapshots, update/result shapes |
 | [`backend/src/access/playerRoleStore.ts`](../backend/src/access/playerRoleStore.ts) | Runtime username-role assignment map and revision, one store per BotSession |
 | [`backend/src/access/playerAuthorization.ts`](../backend/src/access/playerAuthorization.ts) | Pure grant check, without transport or task dependencies |
@@ -50,7 +50,7 @@ To add a new operation later: declare its shared permission ID, map the operatio
 | Operation | Permission ID | Visitor | Crew | Owner |
 | --- | --- | --- | --- | --- |
 | Follow | `task.follow.start` | Yes | Yes | Yes |
-| Guard | `task.guard.start` | No | Yes | Yes |
+| Protect | `task.protect.start` | No | Yes | Yes |
 | Excavation | `task.excavate.start` | No | Yes | Yes |
 | Attack | `task.attack.start` | No | No | Yes |
 | Stop current gameplay task | `task.stop` | No | No | Yes |
@@ -74,7 +74,9 @@ flowchart LR
 
 The existing session socket handler checks deployment attachment before commands. Player-list follow/attack and dashboard task actions use the same command service boundary. In-game commands construct a Minecraft actor and must pass RBAC. Whispers and ordinary dashboard chat remain deployment-authorized operations, not player task permissions.
 
-The chat adapter supports exact `!follow [player]`, `!guard [player]`, `!attack [player]`, `!stop`, and `!dig`/`!excavate` with six coordinates. Prefixes such as `!followExtra` do not invoke tasks. Targets and coordinates are runtime-validated before dispatch. Invalid coordinates, including non-finite/fractional values, are rejected; excavation volume is capped at 10,000 blocks.
+Catalog version 2 uses `task.protect.start`; `!guard` and legacy `guard` actions normalize to Protect with the same authority. The old `task.guard.start` ID grants nothing.
+
+The chat adapter supports exact `!follow [player]`, `!protect [player]`, `!attack [player]`, `!stop`, and `!dig`/`!excavate` with six coordinates. Prefixes such as `!followExtra` do not invoke tasks. Targets and coordinates are runtime-validated before dispatch. Invalid coordinates, including non-finite/fractional values, are rejected; excavation volume is capped at 10,000 blocks.
 
 Denied/rejected in-game commands appear in the dashboard event log and receive a private `/tell` response when the server supports it. Rejection does not stop an existing task or reset idle budgets. Authorization approval and successful gameplay are different: a permitted task may still be unavailable, busy, or unable to reach its target.
 
@@ -108,7 +110,7 @@ Username authorization follows a name, not a verified person. Renames require ma
 
 1. Deploy a bot and open **Player roles** below the collapsed server-player bar.
 2. Enter the actual in-game username, choose Crew or Owner, and click **Assign role**. Names may be offline. The form displays the fixed role permissions and any current Owner transfer warning.
-3. In Minecraft, try a restricted command before/after assignment: a Visitor cannot `!guard Alex`; Crew can request it when Alex is observable and the bot is idle. Only Owner can `!attack Alex` or `!stop`.
+3. In Minecraft, try a restricted command before/after assignment: a Visitor cannot `!protect Alex`; Crew can request it when Alex is observable and the bot is idle. Only Owner can `!attack Alex` or `!stop`.
 4. Change/remove the role while a task runs. Existing work continues; subsequent commands use the updated role. Use deployment dashboard Stop/Disconnect controls for administrative recovery.
 5. Refresh the dashboard: assignments remain with the same session. Removing a row returns that player to Visitor. Assigning Owner to another name transfers the single Owner role.
 

@@ -1,6 +1,6 @@
 # Known issues and architecture follow-ups
 
-Updated: 2026-11-03. Open items are deferred; inclusion here does not mean a fix has been implemented. Priorities describe impact, not a promised delivery date.
+Updated: 2026-11-04. Open items are deferred; inclusion here does not mean a fix has been implemented. Priorities describe impact, not a promised delivery date.
 
 ## KI-001 — Command policy and input validation are inconsistent
 
@@ -26,11 +26,11 @@ Suggested fix: cancellation checks after every asynchronous boundary, active dig
 
 **Open · Medium · Architecture**
 
-`backend/src/botSession.ts` manages connection/retry state, command parsing, guard behavior, equipment, armor, telemetry, and task orchestration. Follow/attack share `TrackedPlayerTask`, excavation uses separate callbacks, and guard remains inline. Equipment and armor operations can overlap task-owned inventory operations.
+`backend/src/botSession.ts` still manages connection/retry state, armor, telemetry, and task orchestration. Protect has been extracted into independent runtime modules with serialized lifecycle and a read-only equipment port. Follow/attack share `TrackedPlayerTask`; excavation still uses separate callbacks. Other equipment/armor paths can overlap and are not governed by a common coordinator.
 
-Suggested fix: extract guard and equipment capabilities, standardize asynchronous task lifecycle/cancellation, and retain a small task coordinator with explicit resource ownership. Keep Mineflayer dependencies inside runtime modules; a wrapper around every library call is unnecessary.
+Follow-up: extract remaining equipment/armor capabilities, standardize asynchronous task lifecycle/cancellation, and retain a small task coordinator with explicit resource ownership. Keep Mineflayer dependencies inside runtime modules; a wrapper around every library call is unnecessary.
 
-Detailed proposals: [Protect overhaul](PROTECT_DESIGN.md) and [equipment follow-up](EQUIPMENT_DESIGN.md). Both await approval. The planned Protect implementation includes only a read-only equipment interface/placeholder; the actual equipping module and migration of other inventory paths remain separately deferred.
+Protect extraction is implemented; [Protect design](PROTECT_DESIGN.md) records its runtime and compatibility constraints. The [equipment follow-up](EQUIPMENT_DESIGN.md), including automatic selection and migration of other inventory paths, remains deferred. Protect tests use the installed PvP implementation with simulated bots; real-server combat/version validation and many-bot load measurements remain outstanding.
 
 ## KI-004 — Frontend client behavior remains embedded in React hooks
 

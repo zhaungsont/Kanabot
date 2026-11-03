@@ -116,12 +116,12 @@ Define a capability contract with a versioned ID, validated parameters/configura
 
 The resource arbiter controls movement, combat, look direction, equipment, inventory, and interaction as needed. Local MVP can implement a small exclusive task model with non-conflicting passive chat/observation; expand concurrency only when demonstrated requirements demand it.
 
-The proposed [Protect overhaul](PROTECT_DESIGN.md) applies those boundaries to escort/combat transitions and threat selection. Its initial equipment integration is a read-only placeholder; [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md) documents the separately deferred equipment work. Future player-threat defense belongs to Protect's invocation authority, without a second RBAC check; the first implementation excludes player candidates. These are design proposals, not implemented runtime behavior.
+The implemented [Protect runtime](PROTECT_DESIGN.md) applies those boundaries to escort/combat transitions and threat selection. `ProtectTask` owns serialized transitions and teardown; `ThreatObserver`, pure `ThreatSelector`, `ProtectCombatAdapter`, and the read-only `EquipmentPort` remain transport-independent. The session's exclusive task/cleanup gate is the local movement lease; no distributed scheduler is added. Shared `ProtectStatus` lets a replacement dashboard render execution without game rules. [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md) documents deferred automatic equipment work. Future player-threat defense belongs to Protect invocation authority without a second RBAC check; player candidates are currently excluded. Stop cleanup must settle before a successor starts; failure is visible and holds the lease until retirement.
 
 Examples of policies:
 
 - Follow and excavation cannot independently command movement at the same time.
-- Guard controls combat and equipment; explicit equipment changes coordinate with it.
+- Protect owns movement/combat and reads held-weapon readiness. Existing armor/tool/Attack equipment mutations are not yet unified; a future equipment coordinator must explicitly migrate those paths.
 - Passive chat and observation may run while moving, subject to their own limits.
 - Emergency stop overrides tasks and model plans. Cancellation is propagated through asynchronous operations and has a tested termination path.
 

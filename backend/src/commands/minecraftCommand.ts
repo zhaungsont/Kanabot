@@ -6,9 +6,9 @@ export function parseMinecraftCommand(username: string, message: string): Parsed
   const [verb, ...args] = message.trim().split(/\s+/);
   const command = verb?.toLowerCase();
   if (command === '!stop') return args.length ? { kind: 'invalid', error: 'Usage: !stop' } : { kind: 'action', action: { type: 'stop' } };
-  if (command === '!follow' || command === '!guard' || command === '!attack') {
+  if (command === '!follow' || command === '!protect' || command === '!guard' || command === '!attack') {
     if (args.length > 1) return { kind: 'invalid', error: `Usage: ${command} [player]` };
-    return { kind: 'action', action: { type: command.slice(1) as 'follow' | 'guard' | 'attack', target: args[0] ?? username } };
+    return { kind: 'action', action: { type: command === '!guard' ? 'protect' : command.slice(1) as 'follow' | 'protect' | 'attack', target: args[0] ?? username } };
   }
   if (command === '!dig' || command === '!excavate') {
     if (args.length !== 6) return { kind: 'invalid', error: 'Usage: !dig <x1> <y1> <z1> <x2> <y2> <z2>' };

@@ -10,7 +10,7 @@ export function validBotAction(value: unknown): value is BotAction {
   if (!value || typeof value !== 'object') return false;
   const action = value as Record<string, unknown>;
   if (action.type === 'stop') return true;
-  if (action.type === 'follow' || action.type === 'guard' || action.type === 'attack') {
+  if (action.type === 'follow' || action.type === 'protect' || action.type === 'guard' || action.type === 'attack') {
     return typeof action.target === 'string' && /^[A-Za-z0-9_]{1,16}$/.test(action.target);
   }
   if (action.type !== 'excavate' || !action.region || typeof action.region !== 'object') return false;
@@ -32,6 +32,6 @@ export class BotCommandService {
     } else if (actor.kind !== 'deployment') return { ok: false, error: 'Unknown command actor.' };
     // Synchronous today: a committed role edit cannot interleave check and dispatch.
     // Execution does not reauthorize or cancel existing work on subsequent role edits.
-    return this.execute(input);
+    return this.execute(input.type === 'guard' ? { ...input, type: 'protect' } : input);
   }
 }

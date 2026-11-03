@@ -14,7 +14,7 @@ export default function LandingPage() {
         <ul style={styles.featureList}>
           <li>⚡ Deploy in seconds — just enter a server IP</li>
           <li>💬 Mirror in-game chat in real time</li>
-          <li>🏃 Follow & Guard commands</li>
+          <li>🏃 Follow & Protect commands</li>
           <li>🆓 Completely free</li>
         </ul>
         <button style={styles.cta} onClick={() => navigate('/dashboard')}>

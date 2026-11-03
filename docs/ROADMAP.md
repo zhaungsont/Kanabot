@@ -222,6 +222,6 @@ Do not force a paid broker, managed database, or orchestration cluster into the 
 
 ## Current starting point
 
-The repository already contains a React/Vite dashboard, Express/Socket.IO backend, in-memory bot management, follow/guard/chat/equipment behavior, and experimental excavation. Existing armor-panel changes are work in progress. This is useful prototype functionality, but it does not meet the expanded Local MVP above.
+The repository already contains a React/Vite dashboard, Express/Socket.IO backend, in-memory bot management, follow/protect/chat/equipment behavior, and experimental excavation. Existing armor-panel changes are work in progress. This is useful prototype functionality, but it does not meet the expanded Local MVP above.
 
 Accounts, durable bot ownership, independent workers, AI, observation beyond the existing dashboard, games, and cloud operation are proposed work. Consult [README.md](../README.md), [spec.md](spec.md), and [tmp/Feature_Spec.md](../tmp/Feature_Spec.md) for earlier intent/current descriptions; those documents contain known drift and are not evidence of release completion.
