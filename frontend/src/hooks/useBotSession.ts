@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { usePlayerList } from './usePlayerList';
+import { usePlayerRoles } from './usePlayerRoles';
 import { createSessionHandle, SessionHandleStore } from '../services/sessionHandleStore';
 import type { BotSessionInfo, BotSessionHandle, BotSessionSnapshot, SessionResult, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion, ArmorSlot, ArmorSlotId } from '../types';
 import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/socketContracts.js';
@@ -159,8 +160,9 @@ export function useBotSession() {
     sessionId: handle?.sessionId ?? null,
     active: connected && !isRestoring && (botInfo?.state === 'idle' || botInfo?.state === 'task'),
   });
+  const playerRoles = usePlayerRoles(connected && !isRestoring && botInfo ? socketRef.current : null, handle?.sessionId ?? null);
   return {
-    playerList, connected, sessionId: handle?.sessionId ?? null, hasSavedSession: !!handle,
+    playerRoles, playerList, connected, sessionId: handle?.sessionId ?? null, hasSavedSession: !!handle,
     botInfo, chatMessages, eventLog, deployError, isDeploying, isRestoring, armorItems,
     deployBot, resumeBot, disconnectBot, sendChat, performAction, excavate, unequipArmor,
   };

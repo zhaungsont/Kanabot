@@ -6,6 +6,7 @@ import EventLog from '../components/EventLog';
 import ActionPanel from '../components/ActionPanel';
 import ArmorPanel from '../components/ArmorPanel';
 import PlayerListPanel from '../components/PlayerListPanel';
+import PlayerRolesPanel from '../components/PlayerRolesPanel';
 import AdBanner from '../components/AdBanner';
 import './DashboardPage.css';
 
@@ -29,6 +30,7 @@ export default function DashboardPage() {
     excavate,
     unequipArmor,
     playerList,
+    playerRoles,
   } = useBotSession();
 
   const isActive = connected && !isRestoring && botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
@@ -83,6 +85,9 @@ export default function DashboardPage() {
           </div>
         )}
         {/* Left Column */}
+        {botInfo && <div style={{ gridColumn: '1 / -1' }}>
+          <PlayerRolesPanel {...playerRoles} onUpdate={playerRoles.updateRole} />
+        </div>}
         <div style={styles.leftCol}>
           {!showPanel ? (
             <BotDeployForm

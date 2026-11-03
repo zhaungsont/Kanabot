@@ -21,6 +21,7 @@ function normalizeConfig(value: unknown): BotConfig | null {
 /** Transport boundary: a socket observes an independently owned runtime. */
 export function registerSessionHandlers(socket: AppSocket, manager: BotManager): void {
   const observer: SessionObserver = {
+    onAccess: (value) => socket.emit('bot:access', value),
     onChat: (value) => socket.emit('bot:chat', value),
     onEvent: (value) => socket.emit('bot:event', value),
     onState: (value) => socket.emit('bot:state', value),
@@ -53,7 +54,6 @@ export function registerSessionHandlers(socket: AppSocket, manager: BotManager):
     if (action.type === 'excavate') session.performAction('excavate', undefined, action.region);
     else if (action.type === 'stop') session.performAction('stop');
     else session.performAction(action.type, action.target);
-    session.resetIdleTimer();
   });
   socket.on('bot:unequip', (id, slot) => {
     const session = manager.getSessionForViewer(socket.id, id);

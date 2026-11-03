@@ -4,11 +4,13 @@ Updated: 2026-11-03. Open items are deferred; inclusion here does not mean a fix
 
 ## KI-001 — Command policy and input validation are inconsistent
 
-**Open · High · Architecture/security**
+**Partially addressed · High · Architecture/security**
 
-`backend/src/botSession.ts` parses Minecraft chat commands directly and does not authorize the speaker. Other players can request follow, guard, stop, or excavation. Socket handlers and runtime methods also have uneven validation; TypeScript contracts do not validate incoming network data. Non-finite or malformed excavation coordinates need explicit rejection.
+Gameplay command authorization is implemented through the fixed role catalog and command service. Exact chat parsing, target/coordinate validation, deployment-authorized assignment APIs, and immediate role updates are covered by regression tests. Non-finite/fractional excavation coordinates are rejected. General account authorization, consistent schemas across non-task endpoints, and uniform command outcomes remain follow-ups; TypeScript contracts alone do not validate untrusted data.
 
-Suggested fix: one application command service taking an actor, bot ID, and validated command, shared by dashboard, Minecraft chat, and future AI adapters. Add permission and malformed-input tests across entry points.
+Follow-up: extend the implemented command service and validation conventions to future AI/integration adapters and non-task operations. Complete account-scoped authorization and general wire schemas as those capabilities arrive; retain bypass and malformed-input regression coverage.
+
+The [RBAC document](BOT_OWNERSHIP_DESIGN.md) describes the implemented local command boundary and its username identity limits. This does not resolve every endpoint/schema/account concern in KI-001.
 
 The lifecycle change now requires an authorized attached viewer for every dashboard command, including chat, disconnect, and armor. The previously reported cross-session socket ownership gap is therefore addressed; account authorization and shared command policy remain open.
 

@@ -10,6 +10,11 @@ Format: `[version] — YYYY-MM-DD`
 
 ### Added
 
+- Gameplay RBAC with fixed inherited Visitor/Crew/Owner grants, a task-permission catalog, and session-scoped username assignments.
+- Deployment-authorized Player roles dashboard panel with assignment/removal, atomic Owner transfer, live viewer updates, and refresh retention.
+- Command service and exact Minecraft chat parser enforce player permissions independently of task execution; role edits affect new commands and leave existing tasks unchanged.
+- Shared access contracts and regression tests for authorization, invalid inputs, assignment conflicts, and role-state broadcasts/resume.
+
 - Browser-independent bot lifecycle: stable IDs, capability-authorized resume, bounded snapshots, and saved browser handles.
 - Transport-independent session registry, per-viewer roster subscriptions, shared bot/lifecycle/socket contracts, and lifecycle regression tests.
 - `KNOWN_ISSUES.md` tracking deferred architecture findings and confirmed task/armor defects.

@@ -1,0 +1,15 @@
+.player-roles-panel { border: 2px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); padding: 1rem; }
+.player-roles-panel h2 { font-size: 1rem; }
+.player-roles-panel p, .player-roles-panel details { margin-top: .65rem; font-size: .78rem; line-height: 1.5; color: var(--color-text-muted); }
+.player-roles-panel form { display: flex; flex-wrap: wrap; gap: .65rem; align-items: end; margin-top: .8rem; }
+.player-roles-panel label { display: flex; flex-direction: column; gap: .25rem; font-size: .8rem; flex: 1 1 150px; }
+.player-roles-panel input, .player-roles-panel select { font: inherit; padding: .5rem; border: 1px solid var(--color-border); border-radius: 6px; background: #fffdf4; min-width: 0; }
+.player-roles-panel button { padding: .5rem .7rem; background: var(--color-accent); color: var(--color-text); border: 1px solid var(--color-border); border-radius: 6px; cursor: pointer; font: inherit; font-size: .8rem; }
+.player-roles-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.player-roles-panel :is(input, select, button, summary):focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
+.player-role-assignments { list-style: none; margin-top: .75rem; padding: 0; }
+.player-role-assignments li { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; border-bottom: 1px solid var(--color-border); font-size: .8rem; flex-wrap: wrap; }
+.player-role-assignments button { margin-left: auto; }
+.player-roles-panel details ul { padding-left: 1.2rem; margin-top: .5rem; }
+.player-roles-panel summary { cursor: pointer; color: var(--color-text); }
+.player-roles-notice { padding: .6rem; background: var(--color-surface-2); border-radius: 6px; }

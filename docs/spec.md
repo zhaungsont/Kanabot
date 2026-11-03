@@ -118,6 +118,16 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 - Every dashboard command requires an authorized attached viewer. Transport disconnect removes that viewer and its roster interest without ending execution. Accounts and durable sessions are not yet implemented.
 - Shared JSON contracts: `shared/playerContracts.d.ts`; backend modules: `backend/src/players/`, `backend/src/tasks/{trackedPlayerTask,followTask,attackTask}.ts`; frontend: `usePlayerList` and `PlayerListPanel`.
 
+#### PlayerRolesPanel and gameplay RBAC
+
+- A deployment-authorized dashboard panel accepts offline or online Minecraft usernames and fixed Visitor/Crew/Owner assignments. Removal restores implicit Visitor access. Assigning Owner atomically transfers the single Owner role.
+- Visitor permits follow; Crew inherits follow and adds guard/excavation; Owner inherits Crew and adds attack/stop. Web administrators use their existing separate deployment authority, not a Minecraft identity link.
+- `backend/src/access/roleCatalog.ts` defines fixed inherited role grants; `backend/src/commands/taskPermissions.ts` maps operations to permission IDs. `shared/accessContracts.d.ts` defines wire shapes. Assignment maps/revisions live in each BotSession's `PlayerRoleStore`, surviving viewer reconnect but not retirement/backend restart.
+- `BotCommandService` validates and authorizes new Minecraft commands before execution. Existing task state is unaffected by assignment changes. There are no task requester/initiator checks or role-driven preemption in RBAC.
+- `bot:access:get` and `bot:access:update` require an attached deployment viewer. Updates include username, role (or null), and expected revision; stale revisions return `CONFLICT`. `bot:access` broadcasts updated snapshots to attached viewers. Resume snapshots include access state.
+- The role hook/panel does not enable live roster sampling. Permission descriptions come from the backend. Exact chat commands include `!follow`, `!guard`, `!attack`, `!stop`, and `!dig`/`!excavate` with six validated integer coordinates.
+- See [BOT_OWNERSHIP_DESIGN.md](BOT_OWNERSHIP_DESIGN.md) for scope, identity limits, module boundaries, and test instructions.
+
 #### AdBanner
 
 - Placeholder `<div>` areas for Google AdSense integration (top and bottom of page)

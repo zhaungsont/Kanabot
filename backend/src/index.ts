@@ -40,6 +40,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { BotManager } from './botManager.js';
+import { registerAccessHandlers } from './access/accessHandlers.js';
 import { registerSessionHandlers } from './sessions/sessionHandlers.js';
 import { registerPlayerHandlers } from './players/playerHandlers.js';
 import {
@@ -75,6 +76,7 @@ app.get('/health', (_req, res) => {
 io.on('connection', (socket) => {
   console.log(`[Socket] Connected: ${socket.id}`);
   registerPlayerHandlers(socket, botManager);
+  registerAccessHandlers(socket, botManager);
 
   registerSessionHandlers(socket, botManager);
 });

@@ -10,13 +10,18 @@ Kanabot is a web platform that lets Minecraft players deploy, configure, and con
 
 ## Architecture
 
+For gameplay roles, permission definitions, and the dashboard role editor, see [BOT_OWNERSHIP_DESIGN.md](docs/BOT_OWNERSHIP_DESIGN.md).
+
 ```text
 Kanabot/
 ├── AGENTS.md                   # Repository-wide agent instructions
+├── README.md                   # Setup and implemented architecture
 ├── backend/                    # Node.js + TypeScript (one process today)
 │   ├── src/
 │   │   ├── index.ts            # Express/Socket.IO composition + health endpoint
 │   │   ├── sessions/           # Create/resume/stop and viewer socket adapter
+│   │   ├── access/             # Fixed role grants, assignment store, authorization
+│   │   ├── commands/           # Task permissions, command service, chat parser
 │   │   ├── botManager.ts       # Stable IDs, access checks, observers, snapshots
 │   │   ├── botSession.ts       # Mineflayer lifecycle + feature orchestration
 │   │   ├── players/            # Roster, targets, whispers, player socket adapter
@@ -35,7 +40,6 @@ Kanabot/
 │   └── package.json
 ├── shared/                     # JSON data, player, lifecycle, socket contracts
 ├── docs/
-│   ├── README.md               # Setup and implemented architecture
 │   ├── ARCHITECTURE.md         # Target design + implemented lifecycle foundation
 │   ├── ROADMAP.md              # Local/cloud milestones
 │   ├── spec.md                 # Feature and protocol specification
@@ -78,7 +82,7 @@ flowchart LR
 
 Bot execution outlives browser connections. Socket disconnect removes a viewer and its telemetry interest; **Disconnect Bot** explicitly retires execution. The manager and bot runtime are independent of Socket.IO, while the current React hooks still contain client transport logic. Common contracts define payloads; they are not a runtime message broker or validator.
 
-Sessions and recent history are currently in memory, with no database, account system, or separate worker processes. The cloud topology in [ARCHITECTURE.md](ARCHITECTURE.md) is the target design, not the current deployment.
+Sessions and recent history are currently in memory, with no database, account system, or separate worker processes. The cloud topology in [ARCHITECTURE.md](docs/ARCHITECTURE.md) is the target design, not the current deployment.
 
 ### Data Flow
 
@@ -233,6 +237,9 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Retry logic** — reconnects on unexpected disconnect (up to 5 attempts)
 - **Player list** — click-to-load dropdown with compact Minecraft Tab-style rows: skin icons, names, health hearts, and inline action icons; available locations, ping/game mode, search, and pagination
 - **Player actions** — private whispers, follow, and confirmed attack with Stop controls; follow/attack use independent task modules with target, chunk, distance, pathfinding, and cancellation checks
+- **Player roles** — assign usernames Visitor, Crew, or Owner on the dashboard, independently of the live roster. Visitor may follow; Crew adds guard/excavation; Owner adds attack/stop. Changes affect new commands while existing tasks continue.
+
+Roles and inherited grants are defined in `backend/src/access/roleCatalog.ts`; task-to-permission mappings are in `backend/src/commands/taskPermissions.ts`. Assignments are held in memory by `PlayerRoleStore` for each bot session and survive browser refresh, but not bot retirement or backend restart. Dashboard administrators remain independent of Minecraft player roles.
 
 ### Player list and task modules
 
@@ -244,7 +251,7 @@ The roster reads Mineflayer's existing player cache; it does not query the Minec
 
 Navigation, refresh, tab closure, and temporary network loss detach the viewer; they do not stop the bot. The dashboard saves a stable bot ID and secret access token before deployment and automatically reattaches on return, restoring current state, cached armor, and bounded recent chat/events. **Disconnect Bot** explicitly stops and retires that bot for every attached viewer. The existing ten-minute idle timeout still applies; active tasks can continue without viewers.
 
-This is a local, memory-only foundation: backend restarts lose sessions/history. One bot handle is remembered per browser origin and backend URL; tabs with the same handle can control that bot. Clearing browser storage loses access to it. The token is a local bearer capability, not a user account; keep this deployment local until hosted identity and operational controls are implemented. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for deferred bugs and architecture work.
+This is a local, memory-only foundation: backend restarts lose sessions/history. One bot handle is remembered per browser origin and backend URL; tabs with the same handle can control that bot. Clearing browser storage loses access to it. The token is a local bearer capability, not a user account; keep this deployment local until hosted identity and operational controls are implemented. See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and [KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for deferred bugs and architecture work.
 
 Player contracts are the shared shapes for player records, roster snapshots, commands, and results. For example, `{ type: 'follow', target: 'Alex' }` describes an intent; the follow task implements it. These TypeScript definitions let the UI change without copying Mineflayer behavior, but do not themselves validate untrusted network input.
 

@@ -1,8 +1,10 @@
 import type { ArmorSlotId, BotAction, BotConfig, BotSessionInfo, ArmorSlot, ChatMessage, EventLogEntry } from './botContracts.js';
 import type { PlayerCommand, PlayerCommandResult, PlayerListSnapshot } from './playerContracts.js';
 import type { BotSessionHandle, BotSessionSnapshot, SessionResult } from './sessionContracts.js';
+import type { PlayerAccessSnapshot, PlayerAccessResult, PlayerRoleUpdate } from './accessContracts.js';
 
 export interface ServerToClientEvents {
+  'bot:access': (snapshot: PlayerAccessSnapshot) => void;
   'bot:removed': (sessionId: string) => void;
   'bot:state': (info: BotSessionInfo) => void;
   'bot:chat': (message: ChatMessage) => void;
@@ -13,6 +15,8 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  'bot:access:get': (sessionId: string, callback: (result: PlayerAccessResult) => void) => void;
+  'bot:access:update': (sessionId: string, update: PlayerRoleUpdate, callback: (result: PlayerAccessResult) => void) => void;
   'bot:create': (
     config: BotConfig,
     handle: BotSessionHandle,

@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { BotSession, type BotSessionCallbacks } from './botSession.js';
 import type { ArmorSlot, BotConfig, BotSessionHandle, BotSessionSnapshot, ChatMessage, EventLogEntry, PlayerListSnapshot, PlayerCommandResult, SessionResult } from './types.js';
 
-export type SessionObserver = Pick<BotSessionCallbacks, 'onChat' | 'onEvent' | 'onArmor' | 'onPlayers'> & {
+export type SessionObserver = Pick<BotSessionCallbacks, 'onChat' | 'onEvent' | 'onArmor' | 'onPlayers' | 'onAccess'> & {
   onState: (info: BotSessionSnapshot['info']) => void;
   onRemoved: (sessionId: string) => void;
 };
@@ -57,6 +57,7 @@ export class BotManager {
       }
     };
     entry.session = this.factory(handle.sessionId, config, {
+      onAccess: (snapshot) => broadcast((observer) => observer.onAccess?.(snapshot)),
       onChat: (message) => {
         entry.chats = [...entry.chats.slice(-199), message];
         broadcast((observer) => observer.onChat(message));
@@ -95,6 +96,7 @@ export class BotManager {
     entry.observers.set(viewerId, observer);
     this.viewerSessions.set(viewerId, handle.sessionId);
     return { ok: true, value: {
+      access: entry.session.getPlayerAccess(),
       info: entry.session.getInfo(), armor: entry.armor,
       chats: [...entry.chats], events: [...entry.events],
     } };

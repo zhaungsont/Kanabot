@@ -84,6 +84,23 @@ test('public bot ID alone cannot attach, issue commands, or stop another bot', (
   f.manager.stopSession('owner', saved.sessionId);
 });
 
+test('role edits broadcast to attached viewers and survive detach/resume without changing task state', () => {
+  const f = fixture(); const saved = handle();
+  const created = f.manager.createSession(config, saved); assert.ok(created.ok);
+  const a = observer(); const b = observer();
+  a.value.onAccess = (snapshot) => a.received.push(snapshot);
+  b.value.onAccess = (snapshot) => b.received.push(snapshot);
+  f.manager.attachViewer(saved, 'a', a.value); f.manager.attachViewer(saved, 'b', b.value);
+  assert.ok(created.value.session.updatePlayerRole({ username:'Steve123', role:'crew', expectedRevision:0 }).ok);
+  assert.ok(a.received.some((value: any) => value.revision === 1));
+  assert.ok(b.received.some((value: any) => value.revision === 1));
+  f.manager.detachViewer('a'); f.manager.detachViewer('b');
+  const resumed = f.manager.attachViewer(saved, 'c', observer().value); assert.ok(resumed.ok);
+  assert.equal(resumed.value.access.revision, 1);
+  assert.deepEqual(resumed.value.access.assignments, [{ username:'Steve123', role:'crew' }]);
+  f.manager.stopSession('c', saved.sessionId);
+});
+
 test('player sampling follows viewer interest and stops only after the final subscriber detaches', () => {
   const f = fixture(); const saved = handle();
   const created = f.manager.createSession(config, saved); assert.ok(created.ok);
@@ -159,7 +176,7 @@ test('all socket command adapters require an authorized attached viewer', () => 
   const created = f.manager.createSession(config, saved); assert.ok(created.ok);
   const session = created.value.session;
   let commands = 0;
-  session.sendChat = () => { commands++; }; session.performAction = () => { commands++; };
+  session.sendChat = () => { commands++; }; session.performAction = () => { commands++; return { ok: true }; };
   session.unequipAndDropArmor = async () => { commands++; };
   session.performPlayerCommand = () => { commands++; return { ok: true }; };
   const attacker = socket('attacker');

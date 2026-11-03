@@ -26,6 +26,12 @@ import type { TrackedPlayerTask, PlayerTaskOutcome } from './tasks/trackedPlayer
 import { PlayerRoster } from './players/playerRoster.js';
 import { resolvePlayerTarget } from './players/playerTarget.js';
 import { whisperToPlayer } from './players/whisper.js';
+import { PlayerRoleStore } from './access/playerRoleStore.js';
+import { normalizePlayerName } from './access/roleCatalog.js';
+import { BotCommandService } from './commands/botCommandService.js';
+import { parseMinecraftCommand } from './commands/minecraftCommand.js';
+import type { BotAction } from './types.js';
+import type { PlayerAccessSnapshot, PlayerAccessResult } from '../../shared/accessContracts.js';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRY_ATTEMPTS = 5;
@@ -37,6 +43,7 @@ const GUARD_TICK_MS = 333;
 /** Entity type names treated as hostile in the guard ability. */
 
 export interface BotSessionCallbacks {
+	onAccess?: (snapshot: PlayerAccessSnapshot) => void;
 	onChat: (msg: ChatMessage) => void;
 	onEvent: (entry: EventLogEntry) => void;
 	onStateChange: () => void;
@@ -69,6 +76,8 @@ export class BotSession {
 	private wasKicked = false;
 	private tickErrorLogged = false;
 	private readonly callbacks: BotSessionCallbacks;
+	private readonly playerRoles: PlayerRoleStore;
+	private readonly commands: BotCommandService;
 
 	constructor(
 		sessionId: string,
@@ -78,6 +87,8 @@ export class BotSession {
 		this.sessionId = sessionId;
 		this.config = config;
 		this.callbacks = callbacks;
+		this.playerRoles = new PlayerRoleStore(sessionId);
+		this.commands = new BotCommandService(this.playerRoles, (action) => this.executeAction(action));
 	}
 
 	// ─── Public Getters ─────────────────────────────────────────────────────────
@@ -359,54 +370,47 @@ export class BotSession {
 		this.resetIdleTimer();
 	}
 
-	performAction(
-		type: 'follow' | 'guard' | 'stop' | 'excavate' | 'attack',
-		target?: string,
-		region?: ExcavateRegion,
-	): void {
-		if (!this.bot) return;
+	getPlayerAccess(): PlayerAccessSnapshot { return this.playerRoles.snapshot(); }
 
-		if (type === 'stop') {
+	updatePlayerRole(input: unknown): PlayerAccessResult {
+		const result = this.playerRoles.update(input);
+		if (result.ok) {
+			this.callbacks.onAccess?.(result.value);
+			this.emitEvent('info', `Deployment administrator updated player roles (revision ${result.value.revision}).`);
+		}
+		return result;
+	}
+
+	/** Deployment adapters must authenticate attachment before calling this boundary. */
+	performAction(type: BotAction['type'], target?: string, region?: ExcavateRegion): PlayerCommandResult {
+		const result = this.commands.submit({ kind: 'deployment' }, { type, target, region });
+		if (!result.ok) this.emitEvent('warning', result.error);
+		return result;
+	}
+
+	private executeAction(action: BotAction): PlayerCommandResult {
+		if (!this.bot || this.destroyed || !['idle', 'task'].includes(this.state)) return { ok: false, error: 'The bot is not active.' };
+		if (action.type === 'stop') {
 			this.stopTask();
 			this.emitEvent('info', 'Task stopped. Bot is idle.');
 			this.resetIdleTimer();
-			return;
+			return { ok: true };
 		}
-
-		if (this.state !== 'idle') {
-			this.emitEvent(
-				'warning',
-				`Cannot start task: bot is currently in state "${this.state}".`,
-			);
-			return;
+		if (this.state !== 'idle') return { ok: false, error: `Cannot start task: bot is currently in state "${this.state}".` };
+		if (this.playerTaskCleanup || this.activeExcavateTask) return { ok: false, error: 'The previous task is still stopping. Try again shortly.' };
+		if (action.type === 'excavate') {
+			const r = action.region;
+			const volume = (Math.abs(r.x2-r.x1)+1)*(Math.abs(r.y2-r.y1)+1)*(Math.abs(r.z2-r.z1)+1);
+			if (volume > 10_000) return { ok: false, error: 'Excavation region too large (max 10000 blocks).' };
+			this.startExcavate(r);
+			this.resetIdleTimer();
+			return { ok: true };
 		}
-		if (this.playerTaskCleanup || this.activeExcavateTask) {
-			this.emitEvent('warning', 'The previous task is still stopping. Try again shortly.');
-			return;
-		}
-
+		if (action.type === 'follow' || action.type === 'attack') return this.startPlayerTask(action.type, action.target);
+		if (!this.bot.players[action.target]?.entity) return { ok: false, error: `Player "${action.target}" is not visible in-game.` };
+		this.startGuard(action.target);
 		this.resetIdleTimer();
-
-		if (type === 'excavate') {
-			if (!region) {
-				this.emitEvent('warning', 'Excavate task requires region coordinates.');
-				return;
-			}
-			this.startExcavate(region);
-			return;
-		}
-
-		if (!target) {
-			this.emitEvent('warning', 'No target player specified for task.');
-			return;
-		}
-
-		if (type === 'follow' || type === 'attack') {
-			const result = this.startPlayerTask(type, target);
-			if (!result.ok) this.emitEvent('warning', result.error);
-		} else {
-			this.startGuard(target);
-		}
+		return { ok: true };
 	}
 
 	// ─── Abilities ───────────────────────────────────────────────────────────────
@@ -475,7 +479,7 @@ export class BotSession {
 		if (!this.bot || this.destroyed || !['idle', 'task'].includes(this.state)) {
 			return { ok: false, error: 'The bot is not active.' };
 		}
-		if (command.type !== 'whisper') return this.startPlayerTask(command.type, command.target);
+		if (command.type !== 'whisper') return this.performAction(command.type, command.target);
 		try {
 			const result = whisperToPlayer(this.bot, command.target, command.message);
 			if (result.ok) {
@@ -720,45 +724,16 @@ export class BotSession {
 		}
 	}
 
-	/** Optional in-game slash commands for players to control the bot directly. */
 	private handleChatCommands(username: string, message: string): void {
-		const lower = message.trim().toLowerCase();
-
-		if (lower.startsWith('!follow')) {
-			const parts = message.trim().split(/\s+/);
-			const target = parts[1] ?? username;
-			this.performAction('follow', target);
-		} else if (lower.startsWith('!guard')) {
-			const parts = message.trim().split(/\s+/);
-			const target = parts[1] ?? username;
-			this.performAction('guard', target);
-		} else if (lower === '!stop') {
-			this.performAction('stop');
-		} else if (lower.startsWith('!dig')) {
-			// Usage: !dig <x1> <y1> <z1> <x2> <y2> <z2>
-			const parts = message.trim().split(/\s+/);
-			if (parts.length !== 7) {
-				if (this.bot) {
-					this.bot.chat('Usage: !dig <x1> <y1> <z1> <x2> <y2> <z2>');
-				}
-				return;
+		const parsed = parseMinecraftCommand(username, message);
+		if (parsed.kind === 'ignore') return;
+		const result = parsed.kind === 'invalid' ? { ok: false as const, error: parsed.error }
+			: this.commands.submit({ kind: 'minecraft', username }, parsed.action);
+		if (!result.ok) {
+			this.emitEvent('warning', `Player command denied/rejected for ${username}: ${result.error}`);
+			if (normalizePlayerName(username) && username === username.trim()) {
+				try { this.bot?.whisper(username, result.error); } catch { /* server may not support /tell */ }
 			}
-			const coords = parts.slice(1).map(Number);
-			if (coords.some(isNaN)) {
-				if (this.bot) {
-					this.bot.chat('All coordinates must be numbers.');
-				}
-				return;
-			}
-			const [x1, y1, z1, x2, y2, z2] = coords as [
-				number,
-				number,
-				number,
-				number,
-				number,
-				number,
-			];
-			this.performAction('excavate', undefined, { x1, y1, z1, x2, y2, z2 });
 		}
 	}
 

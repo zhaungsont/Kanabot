@@ -110,6 +110,8 @@ Apply per-viewer subscriptions, bounded buffers, coalesced replaceable telemetry
 
 ## 7. Capability and task model
 
+The initial [gameplay RBAC implementation](BOT_OWNERSHIP_DESIGN.md) uses fixed Visitor/Crew/Owner permission bundles and session-scoped username-role assignments. A pure evaluator and command service authorize Minecraft commands before runtime dispatch; dashboard assignment management uses separate deployment authorization. Edits apply immediately to new requests without stopping existing work. Stores remain in memory; durable task records/queues and distributed authorization ordering are future work. Task ownership and scheduling policies remain separate from RBAC.
+
 Define a capability contract with a versioned ID, validated parameters/configuration, required permissions, declared resource use, execution/cancellation, progress/result events, and optional checkpoint/recovery methods. Feature availability is enforced in the API, runner, scheduler, and AI tool dispatcher, not just hidden in the UI.
 
 The resource arbiter controls movement, combat, look direction, equipment, inventory, and interaction as needed. Local MVP can implement a small exclusive task model with non-conflicting passive chat/observation; expand concurrency only when demonstrated requirements demand it.
