@@ -11,6 +11,8 @@ export interface ServerPlayer {
   position: { x: number; y: number; z: number; dimension: string } | null;
   distance: number | null;
   health: { value: number; maximum: number | null; source: 'self' | 'entity' | 'metadata' } | null;
+  /** Vanilla exposes hunger/saturation only for this bot, not other players. */
+  hunger: { value: number; maximum: 20; saturation: number | null; source: 'self' } | null;
   canTarget: boolean;
   targetUnavailableReason: string | null;
 }

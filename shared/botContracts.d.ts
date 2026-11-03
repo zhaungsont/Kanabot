@@ -23,6 +23,7 @@ export interface BotSessionInfo {
   spawnedAt: string | null;
   uptime: number;
   protect?: ProtectStatus;
+  behaviors?: import('./behaviorContracts.js').BehaviorStatus;
 }
 export interface ChatMessage {
   username: string; message: string; timestamp: number; isBot?: boolean;

@@ -34,6 +34,32 @@ test('health uses named metadata only when actually supplied, including zero', (
   assert.equal(collectPlayers(bot).find((entry) => entry.username === 'Alex')!.health, null);
 });
 
+test('hunger and saturation project only the bot self state, preserving zero and unknown values', () => {
+  const { bot, alex } = fakeBot();
+  Object.assign(bot, { food: 7, foodSaturation: 2.5 });
+  Object.assign(alex.entity!, { food: 20, foodSaturation: 10 }); // Not a standard remote-player contract.
+  const players = collectPlayers(bot);
+  assert.deepEqual(players.find(p => p.isBot)?.hunger, { value: 7, maximum: 20, saturation: 2.5, source: 'self' });
+  assert.ok(players.filter(p => !p.isBot).every(p => p.hunger === null));
+  Object.assign(bot, { food: 0, foodSaturation: 0 });
+  assert.equal(collectPlayers(bot).find(p => p.isBot)?.hunger?.saturation, 0);
+  Object.assign(bot, { foodSaturation: NaN });
+  assert.equal(collectPlayers(bot).find(p => p.isBot)?.hunger?.saturation, null);
+  Object.assign(bot, { food: undefined });
+  assert.equal(collectPlayers(bot).find(p => p.isBot)?.hunger, null);
+});
+
+test('hunger updates reuse lazy roster sampling and stop when collapsed', context => {
+  context.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_000 });
+  const { bot } = fakeBot(); Object.assign(bot, { food: 20, foodSaturation: 5 });
+  let published = 0; const roster = new PlayerRoster(bot, () => { published++; });
+  roster.setSubscribed(true); bot.food = 19;
+  context.mock.timers.tick(2_999); assert.equal(published, 1);
+  context.mock.timers.tick(1); assert.equal(published, 2);
+  roster.setSubscribed(false); bot.food = 10; context.mock.timers.tick(9_000);
+  assert.equal(published, 2); roster.dispose();
+});
+
 test('stale entity references do not leak old coordinates after leaving tracking range', () => {
   const { bot } = fakeBot();
   delete bot.entities[2];

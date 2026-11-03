@@ -8,6 +8,7 @@ import ArmorPanel from '../components/ArmorPanel';
 import PlayerListPanel from '../components/PlayerListPanel';
 import PlayerRolesPanel from '../components/PlayerRolesPanel';
 import AdBanner from '../components/AdBanner';
+import BehaviorPanel from '../components/BehaviorPanel';
 import './DashboardPage.css';
 
 export default function DashboardPage() {
@@ -31,6 +32,7 @@ export default function DashboardPage() {
     unequipArmor,
     playerList,
     playerRoles,
+    updateBehaviors,
   } = useBotSession();
 
   const isActive = connected && !isRestoring && botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
@@ -120,6 +122,8 @@ export default function DashboardPage() {
               disabled={!isActive}
             />
           )}
+          {botInfo?.behaviors && <BehaviorPanel key={botInfo.sessionId} status={botInfo.behaviors}
+            connected={connected && !isRestoring} onUpdate={updateBehaviors} />}
         </div>
 
         {/* Right Column */}

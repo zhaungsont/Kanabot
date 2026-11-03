@@ -5,6 +5,7 @@ import { usePlayerRoles } from './usePlayerRoles';
 import { createSessionHandle, SessionHandleStore } from '../services/sessionHandleStore';
 import type { BotSessionInfo, BotSessionHandle, BotSessionSnapshot, SessionResult, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion, ArmorSlot, ArmorSlotId } from '../types';
 import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/socketContracts.js';
+import type { BehaviorSettings } from '../../../shared/behaviorContracts.js';
 
 const BACKEND_URL = import.meta.env['VITE_BACKEND_URL'] ?? 'http://localhost:3001';
 const handleStore = new SessionHandleStore(() => window.localStorage, BACKEND_URL);
@@ -155,6 +156,17 @@ export function useBotSession() {
   const unequipArmor = useCallback((slot: ArmorSlotId) => {
     if (socketRef.current?.connected && handleRef.current) socketRef.current.emit('bot:unequip', handleRef.current.sessionId, slot);
   }, []);
+  const updateBehaviors = useCallback((settings: BehaviorSettings): Promise<SessionResult<BehaviorSettings>> => {
+    const socket = socketRef.current, saved = handleRef.current;
+    if (!socket?.connected || !saved) return Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: 'Reconnect to configure behaviors.' });
+    return new Promise(resolve => {
+      socket.timeout(5_000).emit('bot:behaviors:update', saved.sessionId, settings, (error: Error | null, result?: SessionResult<BehaviorSettings>) => {
+        if (socketRef.current !== socket || handleRef.current?.sessionId !== saved.sessionId || error || !result) {
+          resolve({ ok: false, code: 'UNAVAILABLE', error: 'Settings were not acknowledged. Reconnect to check before retrying.' });
+        } else resolve(result);
+      });
+    });
+  }, []);
   const playerList = usePlayerList({
     socket: connected && !isRestoring ? socketRef.current : null,
     sessionId: handle?.sessionId ?? null,
@@ -164,6 +176,6 @@ export function useBotSession() {
   return {
     playerRoles, playerList, connected, sessionId: handle?.sessionId ?? null, hasSavedSession: !!handle,
     botInfo, chatMessages, eventLog, deployError, isDeploying, isRestoring, armorItems,
-    deployBot, resumeBot, disconnectBot, sendChat, performAction, excavate, unequipArmor,
+    deployBot, resumeBot, disconnectBot, sendChat, performAction, excavate, unequipArmor, updateBehaviors,
   };
 }

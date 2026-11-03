@@ -52,6 +52,12 @@
 .player-heart svg, .player-health-unknown > svg { display: block; width: 11px; height: 11px; fill: currentColor; }
 .player-heart-fill { position: absolute; inset: 0 auto 0 0; overflow: hidden; color: #c9454c; }
 .player-health-reference, .player-health-unknown { font-size: .7rem; color: var(--color-text-muted); }
+.player-hunger-group, .player-hunger { display: inline-flex; align-items: center; gap: 1px; }
+.player-hunger-group { gap: .35rem; flex-wrap: wrap; }
+.player-food { position: relative; width: 12px; height: 12px; color: #c8bfb2; }
+.player-food svg, .player-hunger-unknown svg { display: block; width: 12px; height: 12px; fill: currentColor; }
+.player-food-fill { position: absolute; inset: 0 auto 0 0; overflow: hidden; color: #9d502a; }
+.player-saturation, .player-hunger-unknown { font-size: .7rem; color: var(--color-text-muted); }
 .player-actions { display: flex; align-items: center; gap: .3rem; flex-shrink: 0; }
 .player-button { border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-accent); color: var(--color-text); padding: .4rem .65rem; font: inherit; font-size: .76rem; cursor: pointer; }
 .player-button:hover:not(:disabled) { background: var(--color-accent-light); }

@@ -101,12 +101,12 @@ export class ProtectTask {
   };
   private readonly dead = (entity: Entity): void => {
     this.observer.died(entity);
-    if (entity === this.selected) this.invalidateCombat();
+    if (entity === this.selected) this.invalidateCombat(entity);
     if (entity === this.player) this.fail('Protected player died.'); else this.request();
   };
   private readonly gone = (entity: Entity): void => {
     this.observer.gone(entity);
-    if (entity === this.selected) this.invalidateCombat();
+    if (entity === this.selected) this.invalidateCombat(entity);
     if (entity === this.player) this.fail('Protected player left tracking range or changed dimension.'); else this.request();
   };
   private readonly left = (player: Player): void => {
@@ -152,7 +152,7 @@ export class ProtectTask {
     if (this.pathFailed || stalled) {
       this.pathFailed = false;
       if (this.phase === 'engaging' && this.selected) this.observer.exclude(this.selected, now);
-      else { this.fail('Cannot return to protected player within the pathfinding/progress budget.'); return; }
+      else { this.fail('Cannot return to protected player within the pathfinding/progress budget.', 'PLAYER_UNREACHABLE'); return; }
     }
     const candidates = this.observer.observe(this.player, this.selected, now);
     const closest = candidates.filter(c => c.distanceSquared <= 100).reduce((min, c) => Math.min(min, c.distanceSquared), Infinity);
@@ -201,8 +201,8 @@ export class ProtectTask {
     }
     return true;
   }
-  private invalidateCombat(): void {
-    try { this.combat?.invalidate(); } catch (error) { this.fail(`Combat safety stop failed: ${String(error)}`); }
+  private invalidateCombat(entity?: Entity): void {
+    try { this.combat?.invalidate(entity); } catch (error) { this.fail(`Combat safety stop failed: ${String(error)}`); }
   }
   private publish(detail?: string): void {
     const status: ProtectStatus = { phase: this.phase, player: this.target,
@@ -214,10 +214,10 @@ export class ProtectTask {
     const key = JSON.stringify({ ...status, closestDistance: undefined });
     if (key !== this.lastStatus) { this.lastStatus = key; this.onStatus(status); }
   }
-  private fail(message: string): void {
+  private fail(message: string, code?: PlayerTaskOutcome['code']): void {
     if (this.terminal) return;
     this.terminal = true;
-    this.outcome = { level: 'warning', message };
+    this.outcome = { level: 'warning', message, ...(code ? { code } : {}) };
     // Never await teardown from the operation teardown itself needs to drain.
     queueMicrotask(() => { void this.stop().catch(() => { /* stopping status retains the lease */ }); });
   }

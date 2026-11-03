@@ -72,6 +72,11 @@ export function collectPlayers(bot: Bot): ServerPlayer[] {
       } : null,
       distance: distance !== null && finite(distance) ? Math.round(distance * 10) / 10 : null,
       health: playerHealth(bot, entity),
+      hunger: isBot && finite(bot.food) && bot.food >= 0 && bot.food <= 20 ? {
+        value: bot.food, maximum: 20,
+        saturation: finite(bot.foodSaturation) && bot.foodSaturation >= 0 ? bot.foodSaturation : null,
+        source: 'self',
+      } : null,
       canTarget: target.ok,
       targetUnavailableReason: target.ok ? null : target.error,
     };

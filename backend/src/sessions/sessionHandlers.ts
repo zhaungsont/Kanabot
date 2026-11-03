@@ -61,5 +61,10 @@ export function registerSessionHandlers(socket: AppSocket, manager: BotManager):
     void session.unequipAndDropArmor(slot);
     session.resetIdleTimer();
   });
+  socket.on('bot:behaviors:update', (id, settings, callback) => {
+    const session = manager.getSessionForViewer(socket.id, id);
+    if (!session) return reply(callback, { ok: false, code: 'FORBIDDEN', error: 'Attach to this bot before changing behaviors.' });
+    reply(callback, session.updateBehaviors(settings));
+  });
   socket.on('disconnect', () => manager.detachViewer(socket.id));
 }

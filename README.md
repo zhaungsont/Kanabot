@@ -25,6 +25,8 @@ Kanabot/
 │   │   ├── botManager.ts       # Stable IDs, access checks, observers, snapshots
 │   │   ├── botSession.ts       # Mineflayer lifecycle + feature orchestration
 │   │   ├── players/            # Roster, targets, whispers, player socket adapter
+│   │   ├── behaviors/          # Idle auto-eat/self-defense and settings
+│   │   ├── runtime/            # Shared scoped combat lease
 │   │   ├── tasks/              # Follow/attack/excavation + modular protect/ runtime
 │   │   └── types.ts            # Shared contract re-exports
 │   ├── test/                   # Regression tests + simulated Mineflayer fixtures
@@ -75,6 +77,9 @@ flowchart LR
         Session <--> Protect
         Protect --> Threats
         Protect --> Combat
+        Idle["Idle behaviors: auto-eat / bounded self-defense"]
+        Session <--> Idle
+        Idle --> Combat
     end
     Contracts["shared/: compile-time JSON and event contracts"]
     MC["User's Minecraft server"]
@@ -246,6 +251,8 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Player actions** — private whispers, follow, and confirmed attack with Stop controls; follow/attack use independent task modules with target, chunk, distance, pathfinding, and cancellation checks
 - **Player roles** — assign usernames Visitor, Crew, or Owner on the dashboard, independently of the live roster. Visitor may follow; Crew adds protect/excavation; Owner adds attack/stop. Changes affect new commands while existing tasks continue.
 
+Optional **Auto-eat** and **Self-defense** controls run only while idle. Choose Fight/Flight and a fixed response duration (1–120 seconds). Both default off, continue without a dashboard, and yield to tasks through the cleanup gate. Fight requires a held weapon; otherwise the bot flees. See [idle behavior design](docs/IDLE_BEHAVIORS.md) for scope, compatibility and resource ownership.
+
 Roles and inherited grants are defined in `backend/src/access/roleCatalog.ts`; task-to-permission mappings are in `backend/src/commands/taskPermissions.ts`. Assignments are held in memory by `PlayerRoleStore` for each bot session and survive browser refresh, but not bot retirement or backend restart. Dashboard administrators remain independent of Minecraft player roles.
 
 The proposed [Protect overhaul](docs/PROTECT_DESIGN.md) and [equipment-module follow-up](docs/EQUIPMENT_DESIGN.md) are awaiting approval. Protect's first implementation will use a read-only equipment placeholder; automatic equipment selection is a separate later scope.
@@ -253,6 +260,8 @@ The proposed [Protect overhaul](docs/PROTECT_DESIGN.md) and [equipment-module fo
 ### Player list and task modules
 
 The roster reads Mineflayer's existing player cache; it does not query the Minecraft server or load chunks. It samples at most once every three seconds while the panel is open and the browser tab is visible, and sends only changed snapshots. Untracked players stay listed with unknown coordinates/health. Skin icons use the skin texture supplied by the server, with an initial fallback if none is available. Health is explicitly server-reported and can be hidden or altered by the server.
+
+The bot row also shows ten hunger icons and available saturation from Mineflayer's own state. Other players' hunger is unavailable through the standard client protocol; no values are guessed. This uses the existing lazy three-second roster updates.
 
 `backend/src/players/` contains roster projection, target validation, whisper handling, and the socket adapter. `backend/src/tasks/followTask.ts` and `attackTask.ts` share task lifecycle/cleanup in `trackedPlayerTask.ts`; these runtime modules do not depend on Socket.IO. JSON-only interfaces live in `shared/`. The in-process registry owns execution independently of browser sockets; persistent workers/accounts described in `ARCHITECTURE.md` remain proposed work.
 

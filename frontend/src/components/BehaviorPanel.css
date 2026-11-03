@@ -1,0 +1,12 @@
+.behavior-panel { background: var(--color-surface); border: 2px solid var(--color-border); border-radius: var(--radius-lg); padding: 1.25rem; }
+.behavior-panel h2 { margin: 0 0 .7rem; font-size: 1rem; }
+.behavior-panel p { font-size: .8rem; line-height: 1.5; color: var(--color-text-muted); margin: .5rem 0 .8rem; overflow-wrap: anywhere; }
+.behavior-panel label { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; }
+.behavior-panel .behavior-toggle { flex-direction: row; align-items: center; gap: .5rem; font-weight: 700; }
+.behavior-panel form { display: flex; flex-direction: column; gap: .65rem; margin-top: .8rem; }
+.behavior-panel select, .behavior-panel input[type="number"] { width: 100%; min-width: 0; box-sizing: border-box; padding: .5rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.behavior-panel button { padding: .65rem .85rem; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-accent-light); color: var(--color-text); cursor: pointer; font: inherit; font-weight: 700; box-shadow: 0 2px 0 var(--color-border); transition: background .15s, transform .1s; }
+.behavior-panel button:hover:not(:disabled) { background: var(--color-accent); }
+.behavior-panel button:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+.behavior-panel button:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; }
+.behavior-panel button:disabled { cursor: not-allowed; opacity: .5; box-shadow: none; }

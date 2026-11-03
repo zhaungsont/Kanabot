@@ -54,6 +54,25 @@ function HeartIcon() {
   return <svg viewBox="0 0 12 11" aria-hidden="true"><path d="M1 1h3v1h1v1h2V2h1V1h3v1h1v4h-1v1h-1v1H9v1H8v1H7v1H5v-1H4V9H3V8H2V7H1V6H0V2h1Z" /></svg>;
 }
 
+function FoodIcon() {
+  return <svg viewBox="0 0 14 14" aria-hidden="true"><path d="m2 10 2-2-1-2 1-3 3-2 4 1 2 3-1 3-3 2-2-1-2 2v2H3v-1H1v-2Z" /></svg>;
+}
+
+function PlayerHunger({ player }: { player: ServerPlayer }) {
+  if (!player.hunger) return player.isBot ? <span className="player-hunger player-hunger-unknown" role="img"
+    aria-label={`${player.username}: hunger unavailable`} title="Waiting for the bot's hunger data."><FoodIcon />?</span> : null;
+  const { value, maximum, saturation } = player.hunger;
+  const label = `${player.username}: hunger ${value} out of ${maximum}; saturation ${saturation === null ? 'unavailable' : saturation}`;
+  return <span className="player-hunger-group">
+    <span className="player-hunger" role="img" aria-label={label} title={`${label}. Each food icon represents 2 hunger points.`}>
+      {Array.from({ length: 10 }, (_, index) => <span className="player-food" key={index}>
+        <FoodIcon /><span className="player-food-fill" style={{ width: `${Math.max(0, Math.min(1, value / 2 - index)) * 100}%` }}><FoodIcon /></span>
+      </span>)}
+    </span>
+    <span className="player-saturation" title="Server-reported food saturation, a reserve used before hunger decreases.">Sat {saturation === null ? '?' : Math.round(saturation * 10) / 10}</span>
+  </span>;
+}
+
 function ActionIcon({ name }: { name: 'whisper' | 'follow' | 'attack' | 'players' | 'chevron' }) {
   const paths = {
     whisper: <path d="M4 4h16v12H9l-5 4V4Zm4 5h8M8 12h5" />,
@@ -127,6 +146,7 @@ export default function PlayerListPanel(props: PlayerListPanelProps) {
                         <strong title={player.displayName}>{player.username}</strong>
                         {player.isBot && <span className="player-badge">Bot</span>}
                         <PlayerHealth player={player} />
+                        <PlayerHunger player={player} />
                       </div>
                       <PlayerDetails player={player} />
                     </div>
@@ -171,7 +191,7 @@ export default function PlayerListPanel(props: PlayerListPanelProps) {
           <span>Page {currentPage + 1} of {lastPage + 1}</span>
           <button type="button" className="player-button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>Next</button>
         </nav>}
-        <p className="player-list-help">Checks for changes every 3 seconds while open. Health and locations depend on what the server exposes; hover hearts for HP. Updates pause when collapsed or this tab is hidden.</p>
+        <p className="player-list-help">Checks for changes every 3 seconds while open. Health and locations depend on what the server exposes; hover hearts for HP. Hunger and saturation are available for the bot only; hover food icons for values. Updates pause when collapsed or this tab is hidden.</p>
       </div>}
     </section>
   );

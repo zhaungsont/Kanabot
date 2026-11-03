@@ -125,6 +125,8 @@ Examples of policies:
 - Passive chat and observation may run while moving, subject to their own limits.
 - Emergency stop overrides tasks and model plans. Cancellation is propagated through asynchronous operations and has a tested termination path.
 
+Implemented [idle behaviors](IDLE_BEHAVIORS.md) occupy the same local movement/inventory ownership boundary while no task is active. `IdleBehaviors`, `SelfDefenseReaction`, and an auto-eat adapter own their asynchronous work and emit shared status; the UI only configures/renders it. Self-defense has no requester or gameplay RBAC check. Configuration requires existing deployment access. Task requests interrupt idle work but cannot acquire resources until cleanup settles; current synchronous commands return a retry notice during that interval. This adds no general scheduler or new cloud infrastructure.
+
 Games use the same runtime capabilities, with participant permissions, start/stop rules, and bounded outcomes. Add a coordination module for small bot groups in Local Stable. Real-time per-bot reactions remain local; matchmaking/rankings and distributed match infrastructure are future product scope.
 
 ## 8. AI, observation, integrations, and advertising

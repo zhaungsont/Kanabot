@@ -39,6 +39,10 @@ Each consumer owns its readiness unsubscribe handle and task generation. Unsubsc
 
 The future real module must additionally cancel its reconciliation/debounce/retry timers, remove its own inventory listeners, drain/cancel its serialized operation, discard stale selected-item/slot references, and release resource ownership only after no late mutation can affect a successor. An operation deadline alone is not proof that a server-side equip was canceled. Preserve unrelated consumers and plugin/core listeners; never use global listener removal. Shared observation stops only after its final consumer releases it. Full Protect teardown ordering and plugin failure handling are specified in [PROTECT_DESIGN.md](PROTECT_DESIGN.md#32-full-teardown-sequence).
 
+### Auto-eat integration
+
+Idle Auto-eat is separately authorized and implemented through the library adapter described in [IDLE_BEHAVIORS.md](IDLE_BEHAVIORS.md). It temporarily equips food and awaits restoration, with a cleanup gate before tasks or self-defense acquire execution. This does not add weapon ranking or implement the deferred equipment coordinator. Protect's equipment port remains read-only; legacy passive armor/Attack/mining paths still need explicit migration.
+
 ## 3. Planned real equipment implementation
 
 ### Observation

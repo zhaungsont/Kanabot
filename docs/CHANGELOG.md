@@ -8,6 +8,21 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Hunger telemetry and idle-behavior fixes — 2026-11-04
+
+- Added bot hunger icons and available saturation to the player list, using the existing lazy three-second sampling. Other players' hunger is left unknown.
+- Fixed auto-eat remaining permanently unavailable when the controller was created before asynchronous plugin injection. Added clear full-hunger, missing-food and task-pause status; failed meals no longer report completion.
+- Hardened player death/despawn during asynchronous combat startup, retained invalid entity references, and prevented automatic reacquisition of respawned players. Added regressions for pending attack/look work and plugin-internal stop rejection handling.
+- Added behavior settings, starts, completion/cancellation, target loss and failures to the event log; added hover/active/focus/disabled styling and pointer cursor to the response-settings button.
+
+### Idle behavior controls and Protect notification — 2026-11-04
+
+- Protect now privately tells its protected player when an escort/return path failure or progress timeout stops the task, alongside the existing warning. Navigation failure policy is unchanged.
+- Added backend-owned Auto-eat and Self-defense toggles, Fight/Flight mode, configurable fixed response duration, shared status, validation, and deployment-authorized settings updates. Both options default off and run only while idle.
+- Integrated pinned mineflayer-auto-eat 5.0.3 with scoped cancellation/listener cleanup and awaited old-item restoration. New tasks interrupt idle work and wait for confirmed resource cleanup; pending synchronous commands return a retry notice.
+- Added bounded attacker-based self-defense without gameplay RBAC, held-weapon fallback to flight, death/loss handling, and failed-path suppression for the remaining response window. Unknown attackers never cause guessed retaliation.
+- Added installed-library and simulated lifecycle/authorization/notification regression coverage. Design and known compatibility boundaries are documented in IDLE_BEHAVIORS.md.
+
 ### Protect implementation — 2026-11-04
 
 - Added modular ProtectTask, cached threat observations, deterministic urgency/retention, bounded chase/return behavior, and structured dashboard status. Hostile mobs only; `!guard` and legacy actions remain compatibility aliases.

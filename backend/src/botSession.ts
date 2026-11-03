@@ -1,10 +1,22 @@
-import mineflayer, { Bot } from 'mineflayer';
-import pkg from 'mineflayer-pathfinder';
+import mineflayer, { Bot } from "mineflayer";
+import pkg from "mineflayer-pathfinder";
 const { pathfinder, Movements } = pkg;
-import pvpPkg from 'mineflayer-pvp';
+import pvpPkg from "mineflayer-pvp";
 const pvp = (pvpPkg as any).plugin;
-import armorManager from 'mineflayer-armor-manager';
-import { plugin as toolPlugin } from 'mineflayer-tool';
+import armorManager from "mineflayer-armor-manager";
+import { plugin as toolPlugin } from "mineflayer-tool";
+import { loader as autoEatPlugin } from "mineflayer-auto-eat";
+import { IdleBehaviors } from "./behaviors/idleBehaviors.js";
+import {
+	defaultBehaviors,
+	copySettings,
+	validBehaviorSettings,
+} from "./behaviors/settings.js";
+import type {
+	BehaviorSettings,
+	BehaviorStatus,
+} from "../../shared/behaviorContracts.js";
+import type { SessionResult } from "./types.js";
 import {
 	BotState,
 	BotConfig,
@@ -18,22 +30,28 @@ import {
 	PlayerCommand,
 	PlayerCommandResult,
 	PlayerListSnapshot,
-} from './types.js';
-import { ExcavateTask } from './tasks/excavateTask.js';
-import { FollowTask } from './tasks/followTask.js';
-import { AttackTask } from './tasks/attackTask.js';
-import { ProtectTask } from './tasks/protect/protectTask.js';
-import type { ProtectStatus } from '../../shared/botContracts.js';
-import type { TrackedPlayerTask, PlayerTaskOutcome } from './tasks/trackedPlayerTask.js';
-import { PlayerRoster } from './players/playerRoster.js';
-import { resolvePlayerTarget } from './players/playerTarget.js';
-import { whisperToPlayer } from './players/whisper.js';
-import { PlayerRoleStore } from './access/playerRoleStore.js';
-import { normalizePlayerName } from './access/roleCatalog.js';
-import { BotCommandService } from './commands/botCommandService.js';
-import { parseMinecraftCommand } from './commands/minecraftCommand.js';
-import type { BotAction } from './types.js';
-import type { PlayerAccessSnapshot, PlayerAccessResult } from '../../shared/accessContracts.js';
+} from "./types.js";
+import { ExcavateTask } from "./tasks/excavateTask.js";
+import { FollowTask } from "./tasks/followTask.js";
+import { AttackTask } from "./tasks/attackTask.js";
+import { ProtectTask } from "./tasks/protect/protectTask.js";
+import type { ProtectStatus } from "../../shared/botContracts.js";
+import type {
+	TrackedPlayerTask,
+	PlayerTaskOutcome,
+} from "./tasks/trackedPlayerTask.js";
+import { PlayerRoster } from "./players/playerRoster.js";
+import { resolvePlayerTarget } from "./players/playerTarget.js";
+import { whisperToPlayer } from "./players/whisper.js";
+import { PlayerRoleStore } from "./access/playerRoleStore.js";
+import { normalizePlayerName } from "./access/roleCatalog.js";
+import { BotCommandService } from "./commands/botCommandService.js";
+import { parseMinecraftCommand } from "./commands/minecraftCommand.js";
+import type { BotAction } from "./types.js";
+import type {
+	PlayerAccessSnapshot,
+	PlayerAccessResult,
+} from "../../shared/accessContracts.js";
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRY_ATTEMPTS = 5;
@@ -53,7 +71,7 @@ export class BotSession {
 	readonly sessionId: string;
 	readonly config: BotConfig;
 
-	state: BotState = 'disconnected';
+	state: BotState = "disconnected";
 	currentTask: TaskType = null;
 	taskTarget: string | null = null;
 	spawnedAt: Date | null = null;
@@ -62,6 +80,14 @@ export class BotSession {
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private retryTimer: ReturnType<typeof setTimeout> | null = null;
 	private protectStatus: ProtectStatus | undefined;
+	private behaviorSettings = defaultBehaviors();
+	private behaviorStatus: BehaviorStatus = {
+		settings: defaultBehaviors(),
+		activity: "idle",
+		detail: "Enabled behaviors run only while idle.",
+	};
+	private idleBehaviors: IdleBehaviors | null = null;
+	private manualInventoryBusy: symbol | null = null;
 	private activePlayerTask: TrackedPlayerTask | ProtectTask | null = null;
 	private playerTaskCleanup: Promise<void> | null = null;
 	private playerRoster: PlayerRoster | null = null;
@@ -84,7 +110,9 @@ export class BotSession {
 		this.config = config;
 		this.callbacks = callbacks;
 		this.playerRoles = new PlayerRoleStore(sessionId);
-		this.commands = new BotCommandService(this.playerRoles, (action) => this.executeAction(action));
+		this.commands = new BotCommandService(this.playerRoles, (action) =>
+			this.executeAction(action),
+		);
 	}
 
 	// ─── Public Getters ─────────────────────────────────────────────────────────
@@ -104,6 +132,10 @@ export class BotSession {
 			spawnedAt: this.spawnedAt?.toISOString() ?? null,
 			uptime: this.uptime,
 			protect: this.protectStatus,
+			behaviors: {
+				...this.behaviorStatus,
+				settings: copySettings(this.behaviorSettings),
+			},
 		};
 	}
 
@@ -111,12 +143,12 @@ export class BotSession {
 
 	spawn(): void {
 		if (this.destroyed) return;
-		if (this.state !== 'disconnected' && this.state !== 'dead') return;
-		this.setState('spawning');
+		if (this.state !== "disconnected" && this.state !== "dead") return;
+		this.setState("spawning");
 		const target = this.config.serverPort
 			? `${this.config.serverHost}:${this.config.serverPort}`
 			: this.config.serverHost;
-		this.emitEvent('info', `Connecting to ${target}...`);
+		this.emitEvent("info", `Connecting to ${target}...`);
 		this.createBot();
 	}
 
@@ -132,15 +164,16 @@ export class BotSession {
 				}),
 				username: this.config.botName,
 				version: this.config.version || undefined,
-				auth: 'offline',
+				auth: "offline",
 			});
 			this.bot.loadPlugin(pathfinder);
 			this.bot.loadPlugin(pvp);
 			this.bot.loadPlugin(armorManager);
 			this.bot.loadPlugin(toolPlugin);
+			this.bot.loadPlugin(autoEatPlugin);
 			this.setupBotEvents();
 		} catch (err) {
-			this.emitEvent('error', `Failed to create bot: ${err}`);
+			this.emitEvent("error", `Failed to create bot: ${err}`);
 			this.handleDisconnect(false);
 		}
 	}
@@ -151,6 +184,28 @@ export class BotSession {
 		// "Cannot read properties of null" if callbacks used this.bot! directly.
 		const bot = this.bot;
 		if (!bot) return;
+		this.manualInventoryBusy = null;
+		this.idleBehaviors?.dispose();
+		this.idleBehaviors = new IdleBehaviors(
+			bot,
+			this.behaviorSettings,
+			() =>
+				this.bot === bot &&
+				!this.destroyed &&
+				this.state === "idle" &&
+				this.currentTask === null &&
+				!this.playerTaskCleanup &&
+				!this.activeExcavateTask &&
+				!this.manualInventoryBusy,
+			(status) => {
+				if (this.bot !== bot || this.destroyed) return;
+				this.behaviorStatus = status;
+				this.callbacks.onStateChange();
+			},
+			(message, level = "warning") => {
+				if (this.bot === bot && !this.destroyed) this.emitEvent(level, message);
+			},
+		);
 		this.playerRoster?.dispose();
 		this.playerRoster = new PlayerRoster(bot, (snapshot) => {
 			if (this.bot === bot && !this.destroyed) {
@@ -158,11 +213,11 @@ export class BotSession {
 			}
 		});
 
-		bot.on('spawn', () => {
+		bot.on("spawn", () => {
 			// Stale-event guard: skip if this bot has already been replaced or destroyed.
 			if (this.bot !== bot || this.destroyed) return;
 
-			const isRespawn = this.state === 'dead';
+			const isRespawn = this.state === "dead";
 
 			if (!isRespawn) {
 				// Initial spawn: one-time setup.
@@ -173,7 +228,7 @@ export class BotSession {
 				bot.pathfinder.setMovements(defaultMove);
 
 				this.emitEvent(
-					'success',
+					"success",
 					`Bot "${this.config.botName}" spawned successfully!`,
 				);
 				this.emitSystemChat(
@@ -181,43 +236,44 @@ export class BotSession {
 				);
 			} else {
 				// Respawn after death: restore active state.
-				this.emitEvent('info', `Bot "${this.config.botName}" has respawned.`);
+				this.emitEvent("info", `Bot "${this.config.botName}" has respawned.`);
 				this.emitSystemChat(`Bot "${this.config.botName}" has respawned.`);
 			}
 
 			(bot as any).armorManager.equipAll();
-			this.setState('idle');
+			this.setState("idle");
 			this.resetIdleTimer();
 			this.emitArmorUpdate(bot);
 			this.playerRoster?.setSubscribed(this.playersSubscribed);
 		});
 
-		bot.on('entityEquip', (entity: any) => {
-			console.log('in entityEquip');
+		bot.on("entityEquip", (entity: any) => {
+			// console.log('in entityEquip');
 			if (this.bot !== bot || this.destroyed) return;
-			console.log('entity', entity);
+			// console.log("entity", entity);
 			if (entity !== bot.entity) return;
-			console.log('entityEquip', entity);
+			// console.log("entityEquip", entity);
 			this.emitArmorUpdate(bot);
 		});
 
-		bot.on('physicsTick', () => {
+		bot.on("physicsTick", () => {
 			if (this.bot !== bot) return;
 			try {
 				// Pathfinder/combat owns looking during tasks; passive glances must not fight it.
-				if (this.state === 'idle') this.lookAtNearestEntity(bot);
+				if (this.state === "idle" && !this.idleBehaviors?.busy)
+					this.lookAtNearestEntity(bot);
 			} catch (err) {
 				if (!this.tickErrorLogged) {
 					this.tickErrorLogged = true;
 					this.emitEvent(
-						'error',
+						"error",
 						`physicsTick error: ${(err as Error).message}`,
 					);
 				}
 			}
 		});
 
-		bot.on('chat', (username: string, message: string) => {
+		bot.on("chat", (username: string, message: string) => {
 			if (this.bot !== bot) return;
 			if (username === this.config.botName) return;
 
@@ -226,44 +282,55 @@ export class BotSession {
 			this.handleChatCommands(username, message);
 		});
 
-		bot.on('whisper', (username: string, message: string) => {
-			if (this.bot !== bot || this.destroyed || username === this.config.botName) return;
-			this.callbacks.onChat({ username, message, timestamp: Date.now(), channel: 'whisper', recipient: this.config.botName });
+		bot.on("whisper", (username: string, message: string) => {
+			if (
+				this.bot !== bot ||
+				this.destroyed ||
+				username === this.config.botName
+			)
+				return;
+			this.callbacks.onChat({
+				username,
+				message,
+				timestamp: Date.now(),
+				channel: "whisper",
+				recipient: this.config.botName,
+			});
 		});
 
-		bot.on('death', () => {
+		bot.on("death", () => {
 			if (this.bot !== bot) return;
 			this.stopTask();
 			this.clearIdleTimer();
-			this.setState('dead');
+			this.setState("dead");
 			this.playerRoster?.setSubscribed(false);
-			this.emitEvent('warning', `Bot "${this.config.botName}" has died.`);
+			this.emitEvent("warning", `Bot "${this.config.botName}" has died.`);
 			this.emitSystemChat(`Bot "${this.config.botName}" has died.`);
 		});
 
-		bot.on('kicked', (reason: string) => {
+		bot.on("kicked", (reason: string) => {
 			if (this.bot !== bot) return;
 			this.wasKicked = true;
 			this.stopTask();
 			this.clearIdleTimer();
-			this.emitEvent('error', `Bot was kicked: ${reason}`);
+			this.emitEvent("error", `Bot was kicked: ${reason}`);
 			this.emitSystemChat(`Bot was kicked: ${reason}`);
 			// 'end' fires right after 'kicked'; wasKicked flag blocks retry there.
 		});
 
-		bot.on('error', (err: Error & { name?: string }) => {
+		bot.on("error", (err: Error & { name?: string }) => {
 			if (this.bot !== bot) return;
 
 			// protodef PartialReadError — indicates a Minecraft version mismatch between
 			// the bot config and the actual server. The session will end and retry, so
 			// just surface a clear diagnostic rather than a raw stack trace.
 			if (
-				err.name === 'PartialReadError' ||
-				err.constructor?.name === 'PartialReadError' ||
-				err.message?.includes('Unexpected buffer end')
+				err.name === "PartialReadError" ||
+				err.constructor?.name === "PartialReadError" ||
+				err.message?.includes("Unexpected buffer end")
 			) {
 				this.emitEvent(
-					'error',
+					"error",
 					`Packet parse error — possible version mismatch. ` +
 						`Try setting the Minecraft version explicitly (e.g. "1.21.4"). ` +
 						`[${err.message}]`,
@@ -272,26 +339,26 @@ export class BotSession {
 			}
 
 			const msg = friendlyErrorMessage(err);
-			this.emitEvent('error', `Bot error: ${msg}`);
+			this.emitEvent("error", `Bot error: ${msg}`);
 
 			// If 'end' never fires (e.g. DNS failure, early ECONNRESET), recover the
 			// session so it doesn't stay stuck in 'spawning' forever.
-			if (this.state === 'spawning') {
+			if (this.state === "spawning") {
 				this.stopTask();
 				this.clearIdleTimer();
 				setTimeout(() => {
-					if (this.state === 'spawning' && !this.destroyed) {
+					if (this.state === "spawning" && !this.destroyed) {
 						this.handleDisconnect(!this.wasKicked);
 					}
 				}, 500);
 			}
 		});
 
-		bot.on('end', (reason: string) => {
+		bot.on("end", (reason: string) => {
 			if (this.bot !== bot || this.destroyed) return;
 			this.stopTask();
 			this.clearIdleTimer();
-			this.emitEvent('info', `Bot disconnected: ${reason}`);
+			this.emitEvent("info", `Bot disconnected: ${reason}`);
 			this.emitSystemChat(`Bot disconnected (${reason}).`);
 			this.handleDisconnect(!this.wasKicked);
 		});
@@ -300,33 +367,37 @@ export class BotSession {
 	private handleDisconnect(shouldRetry: boolean): void {
 		if (this.destroyed) return;
 		this.clearRetryTimer();
+		this.idleBehaviors?.dispose();
+		this.idleBehaviors = null;
 		this.playerRoster?.dispose();
 		this.playerRoster = null;
 		this.bot = null;
-		this.setState('disconnected');
+		this.setState("disconnected");
 
 		if (shouldRetry && this.retryCount < MAX_RETRY_ATTEMPTS) {
 			this.retryCount++;
 			const delay = RETRY_DELAY_BASE_MS * this.retryCount;
 			this.emitEvent(
-				'info',
+				"info",
 				`Retry ${this.retryCount}/${MAX_RETRY_ATTEMPTS} in ${delay / 1000}s...`,
 			);
 			this.retryTimer = setTimeout(() => {
 				this.retryTimer = null;
-				if (!this.destroyed && this.state === 'disconnected') {
-					this.setState('spawning');
+				if (!this.destroyed && this.state === "disconnected") {
+					this.setState("spawning");
 					this.createBot();
 				}
 			}, delay);
 		} else if (this.retryCount >= MAX_RETRY_ATTEMPTS) {
-			this.emitEvent('error', 'Max retry attempts reached. Session ended.');
+			this.emitEvent("error", "Max retry attempts reached. Session ended.");
 			this.destroy();
 		}
 	}
 
 	disconnect(): void {
 		this.clearRetryTimer();
+		this.idleBehaviors?.dispose();
+		this.idleBehaviors = null;
 		this.stopTask();
 		this.playerRoster?.dispose();
 		this.playerRoster = null;
@@ -340,9 +411,9 @@ export class BotSession {
 			}
 			this.bot = null;
 		}
-		this.setState('disconnected');
-		this.emitEvent('info', 'Bot disconnected by user.');
-		this.emitSystemChat('Bot has disconnected.');
+		this.setState("disconnected");
+		this.emitEvent("info", "Bot disconnected by user.");
+		this.emitSystemChat("Bot has disconnected.");
 	}
 
 	destroy(): void {
@@ -354,8 +425,24 @@ export class BotSession {
 
 	// ─── Actions ─────────────────────────────────────────────────────────────────
 
+	updateBehaviors(input: unknown): SessionResult<BehaviorSettings> {
+		if (!validBehaviorSettings(input))
+			return {
+				ok: false,
+				code: "INVALID_REQUEST",
+				error:
+					"Invalid behavior settings. Response duration must be 1–120 whole seconds.",
+			};
+		if (this.destroyed)
+			return { ok: false, code: "UNAVAILABLE", error: "Bot has been retired." };
+		this.behaviorSettings = copySettings(input);
+		this.idleBehaviors?.update(this.behaviorSettings);
+		this.callbacks.onStateChange();
+		return { ok: true, value: copySettings(this.behaviorSettings) };
+	}
+
 	sendChat(message: string): void {
-		if (!this.bot || this.state === 'disconnected' || this.state === 'spawning')
+		if (!this.bot || this.state === "disconnected" || this.state === "spawning")
 			return;
 		this.bot.chat(message);
 		this.callbacks.onChat({
@@ -367,44 +454,85 @@ export class BotSession {
 		this.resetIdleTimer();
 	}
 
-	getPlayerAccess(): PlayerAccessSnapshot { return this.playerRoles.snapshot(); }
+	getPlayerAccess(): PlayerAccessSnapshot {
+		return this.playerRoles.snapshot();
+	}
 
 	updatePlayerRole(input: unknown): PlayerAccessResult {
 		const result = this.playerRoles.update(input);
 		if (result.ok) {
 			this.callbacks.onAccess?.(result.value);
-			this.emitEvent('info', `Deployment administrator updated player roles (revision ${result.value.revision}).`);
+			this.emitEvent(
+				"info",
+				`Deployment administrator updated player roles (revision ${result.value.revision}).`,
+			);
 		}
 		return result;
 	}
 
 	/** Deployment adapters must authenticate attachment before calling this boundary. */
-	performAction(type: BotAction['type'], target?: string, region?: ExcavateRegion): PlayerCommandResult {
-		const result = this.commands.submit({ kind: 'deployment' }, { type, target, region });
-		if (!result.ok) this.emitEvent('warning', result.error);
+	performAction(
+		type: BotAction["type"],
+		target?: string,
+		region?: ExcavateRegion,
+	): PlayerCommandResult {
+		const result = this.commands.submit(
+			{ kind: "deployment" },
+			{ type, target, region },
+		);
+		if (!result.ok) this.emitEvent("warning", result.error);
 		return result;
 	}
 
 	private executeAction(action: BotAction): PlayerCommandResult {
-		if (!this.bot || this.destroyed || !['idle', 'task'].includes(this.state)) return { ok: false, error: 'The bot is not active.' };
-		if (action.type === 'stop') {
+		if (!this.bot || this.destroyed || !["idle", "task"].includes(this.state))
+			return { ok: false, error: "The bot is not active." };
+		if (action.type === "stop") {
+			this.idleBehaviors?.prepareForTask();
 			this.stopTask();
-			this.emitEvent('info', 'Task stop requested.');
+			this.emitEvent("info", "Task stop requested.");
 			this.resetIdleTimer();
 			return { ok: true };
 		}
-		if (this.state !== 'idle') return { ok: false, error: `Cannot start task: bot is currently in state "${this.state}".` };
-		if (this.playerTaskCleanup || this.activeExcavateTask) return { ok: false, error: 'The previous task is still stopping. Try again shortly.' };
-		if (action.type === 'excavate') {
+		if (this.state !== "idle")
+			return {
+				ok: false,
+				error: `Cannot start task: bot is currently in state "${this.state}".`,
+			};
+		if (this.playerTaskCleanup || this.activeExcavateTask)
+			return {
+				ok: false,
+				error: "The previous task is still stopping. Try again shortly.",
+			};
+		if (this.manualInventoryBusy)
+			return {
+				ok: false,
+				error: "An inventory operation is still finishing. Try again shortly.",
+			};
+		if (this.idleBehaviors && !this.idleBehaviors.prepareForTask())
+			return {
+				ok: false,
+				error:
+					"Idle behavior is stopping before this task can start. Retry once cleanup finishes.",
+			};
+		if (action.type === "excavate") {
 			const r = action.region;
-			const volume = (Math.abs(r.x2-r.x1)+1)*(Math.abs(r.y2-r.y1)+1)*(Math.abs(r.z2-r.z1)+1);
-			if (volume > 10_000) return { ok: false, error: 'Excavation region too large (max 10000 blocks).' };
+			const volume =
+				(Math.abs(r.x2 - r.x1) + 1) *
+				(Math.abs(r.y2 - r.y1) + 1) *
+				(Math.abs(r.z2 - r.z1) + 1);
+			if (volume > 10_000)
+				return {
+					ok: false,
+					error: "Excavation region too large (max 10000 blocks).",
+				};
 			this.startExcavate(r);
 			this.resetIdleTimer();
 			return { ok: true };
 		}
-		if (action.type === 'follow' || action.type === 'attack') return this.startPlayerTask(action.type, action.target);
-		return this.startPlayerTask('protect', action.target);
+		if (action.type === "follow" || action.type === "attack")
+			return this.startPlayerTask(action.type, action.target);
+		return this.startPlayerTask("protect", action.target);
 	}
 
 	// ─── Abilities ───────────────────────────────────────────────────────────────
@@ -413,14 +541,14 @@ export class BotSession {
 	private lookAtNearestEntity(bot: Bot): void {
 		const target = bot.nearestEntity(
 			// 'animal' is a valid runtime type; cast until mineflayer typings catch up
-			(e) => e.type === 'player' || (e.type as string) === 'animal',
+			(e) => e.type === "player" || (e.type as string) === "animal",
 		);
 		if (!target) return;
 		bot.lookAt(target.position.offset(0, target.height * 0.9, 0));
 	}
 	setPlayersSubscribed(enabled: boolean): PlayerCommandResult {
-		if (enabled && (!this.bot || !['idle', 'task'].includes(this.state))) {
-			return { ok: false, error: 'The bot must be connected to view players.' };
+		if (enabled && (!this.bot || !["idle", "task"].includes(this.state))) {
+			return { ok: false, error: "The bot must be connected to view players." };
 		}
 		this.playersSubscribed = enabled;
 		this.playerRoster?.setSubscribed(enabled);
@@ -428,14 +556,22 @@ export class BotSession {
 	}
 
 	performPlayerCommand(command: PlayerCommand): PlayerCommandResult {
-		if (!this.bot || this.destroyed || !['idle', 'task'].includes(this.state)) {
-			return { ok: false, error: 'The bot is not active.' };
+		if (!this.bot || this.destroyed || !["idle", "task"].includes(this.state)) {
+			return { ok: false, error: "The bot is not active." };
 		}
-		if (command.type !== 'whisper') return this.performAction(command.type, command.target);
+		if (command.type !== "whisper")
+			return this.performAction(command.type, command.target);
 		try {
 			const result = whisperToPlayer(this.bot, command.target, command.message);
 			if (result.ok) {
-				this.callbacks.onChat({ username: this.config.botName, message: command.message.trim(), timestamp: Date.now(), isBot: true, channel: 'whisper', recipient: command.target });
+				this.callbacks.onChat({
+					username: this.config.botName,
+					message: command.message.trim(),
+					timestamp: Date.now(),
+					isBot: true,
+					channel: "whisper",
+					recipient: command.target,
+				});
 				this.resetIdleTimer();
 			}
 			return result;
@@ -444,64 +580,123 @@ export class BotSession {
 		}
 	}
 
-	private startPlayerTask(type: 'follow' | 'attack' | 'protect', playerName: string): PlayerCommandResult {
+	private startPlayerTask(
+		type: "follow" | "attack" | "protect",
+		playerName: string,
+	): PlayerCommandResult {
 		const bot = this.bot;
-		if (!bot || this.state !== 'idle' || this.destroyed) {
-			return { ok: false, error: 'Stop the current task before starting another player task.' };
+		if (!bot || this.state !== "idle" || this.destroyed) {
+			return {
+				ok: false,
+				error: "Stop the current task before starting another player task.",
+			};
 		}
-		if (this.playerTaskCleanup || this.activeExcavateTask) return { ok: false, error: 'The previous task is still stopping. Try again shortly.' };
+		if (this.playerTaskCleanup || this.activeExcavateTask)
+			return {
+				ok: false,
+				error: "The previous task is still stopping. Try again shortly.",
+			};
 		const target = resolvePlayerTarget(bot, playerName);
 		if (!target.ok) return target;
-		if (type === 'attack' && target.player.gamemode === 1) {
-			return { ok: false, error: 'Creative-mode players are invulnerable.' };
+		if (type === "attack" && target.player.gamemode === 1) {
+			return { ok: false, error: "Creative-mode players are invulnerable." };
 		}
 		const onFinished = (outcome: PlayerTaskOutcome): void => {
-			if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed) return;
+			if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed)
+				return;
 			this.activePlayerTask = null;
 			this.protectStatus = undefined;
 			this.currentTask = null;
 			this.taskTarget = null;
-			if (this.state === 'task') this.setState('idle');
+			if (this.state === "task") this.setState("idle");
 			this.emitEvent(outcome.level, outcome.message);
+			if (type === "protect" && outcome.code === "PLAYER_UNREACHABLE") {
+				const message =
+					"I can't reach you: no usable route was found within my navigation limits. Protect has stopped. Move somewhere accessible and ask me to protect you again.";
+				try {
+					const sent = whisperToPlayer(bot, target.player.username, message);
+					if (sent.ok)
+						this.callbacks.onChat({
+							username: bot.username,
+							message,
+							timestamp: Date.now(),
+							isBot: true,
+							channel: "whisper",
+							recipient: target.player.username,
+						});
+					else
+						this.emitEvent(
+							"warning",
+							`Could not notify protected player: ${sent.error}`,
+						);
+				} catch (error) {
+					this.emitEvent(
+						"warning",
+						`Could not notify protected player: ${String(error)}`,
+					);
+				}
+			}
 			this.resetIdleTimer();
 		};
-		const task = type === 'follow'
-			? new FollowTask(bot, target.player.username, onFinished)
-			: type === 'attack' ? new AttackTask(bot, target.player.username, onFinished)
-			: new ProtectTask(bot, target.player.username, onFinished, (status) => {
-				if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed) return;
-				this.protectStatus = status;
-				this.callbacks.onStateChange();
-			});
+		const task =
+			type === "follow"
+				? new FollowTask(bot, target.player.username, onFinished)
+				: type === "attack"
+					? new AttackTask(bot, target.player.username, onFinished)
+					: new ProtectTask(
+							bot,
+							target.player.username,
+							onFinished,
+							(status) => {
+								if (
+									this.activePlayerTask !== task ||
+									this.bot !== bot ||
+									this.destroyed
+								)
+									return;
+								this.protectStatus = status;
+								this.callbacks.onStateChange();
+							},
+						);
 		this.activePlayerTask = task;
 		this.currentTask = type;
 		this.taskTarget = target.player.username;
-		this.setState('task');
+		this.setState("task");
 		this.resetIdleTimer();
 		try {
-			void task.start().catch(() => { /* task reports its asynchronous failure */ });
+			void task.start().catch(() => {
+				/* task reports its asynchronous failure */
+			});
 		} catch (error) {
 			this.stopTask();
-			return { ok: false, error: `Could not start player task: ${String(error)}` };
+			return {
+				ok: false,
+				error: `Could not start player task: ${String(error)}`,
+			};
 		}
-		this.emitEvent('info', `${type === 'follow' ? 'Following' : type === 'protect' ? 'Protecting' : 'Attacking'} "${target.player.username}".`);
-		this.emitSystemChat(`Bot acknowledged: ${type} "${target.player.username}".`);
+		this.emitEvent(
+			"info",
+			`${type === "follow" ? "Following" : type === "protect" ? "Protecting" : "Attacking"} "${target.player.username}".`,
+		);
+		this.emitSystemChat(
+			`Bot acknowledged: ${type} "${target.player.username}".`,
+		);
 		return { ok: true };
 	}
 
 	private startExcavate(region: ExcavateRegion): void {
 		if (!this.bot) return;
 
-		this.currentTask = 'excavate';
+		this.currentTask = "excavate";
 		this.taskTarget = null;
-		this.setState('task');
+		this.setState("task");
 
 		const task = new ExcavateTask();
 		this.activeExcavateTask = task;
 
 		const { x1, y1, z1, x2, y2, z2 } = region;
 		this.emitEvent(
-			'info',
+			"info",
 			`Excavate task started: (${x1},${y1},${z1}) → (${x2},${y2},${z2}).`,
 		);
 		if (this.bot) {
@@ -519,34 +714,34 @@ export class BotSession {
 					const prevPct = Math.floor(((current - 1) / total) * 100);
 					if (pct !== prevPct && pct % 10 === 0) {
 						this.emitEvent(
-							'info',
+							"info",
 							`Excavation progress: ${pct}% (${current}/${total})`,
 						);
 					}
 				},
 				onComplete: () => {
-					this.emitEvent('success', 'Excavation complete!');
-					if (this.bot) this.bot.chat('Excavation complete!');
+					this.emitEvent("success", "Excavation complete!");
+					if (this.bot) this.bot.chat("Excavation complete!");
 					this.activeExcavateTask = null;
 					this.currentTask = null;
 					this.taskTarget = null;
-					this.setState('idle');
+					this.setState("idle");
 					this.resetIdleTimer();
 				},
 				onAbort: () => {
 					this.activeExcavateTask = null;
 					this.currentTask = null;
 					this.taskTarget = null;
-					if (this.state === 'task') this.setState('idle');
+					if (this.state === "task") this.setState("idle");
 					this.resetIdleTimer();
 				},
 			})
 			.catch((err: Error) => {
-				this.emitEvent('error', `Excavation error: ${err.message}`);
+				this.emitEvent("error", `Excavation error: ${err.message}`);
 				this.activeExcavateTask = null;
 				this.currentTask = null;
 				this.taskTarget = null;
-				if (this.state === 'task') this.setState('idle');
+				if (this.state === "task") this.setState("idle");
 				this.resetIdleTimer();
 			});
 	}
@@ -555,30 +750,49 @@ export class BotSession {
 		const playerTask = this.activePlayerTask;
 		if (playerTask instanceof ProtectTask) {
 			if (this.playerTaskCleanup) return;
-			const cleanup = playerTask.stop().then(() => {
-				if (this.activePlayerTask !== playerTask) return;
-				this.activePlayerTask = null;
-				this.protectStatus = undefined;
-				this.currentTask = null;
-				this.taskTarget = null;
-				if (this.state === 'task') this.setState('idle');
-				this.resetIdleTimer();
-			}, (error: unknown) => {
-				this.emitEvent('error', `Protect cleanup failed; retire this deployment: ${String(error)}`);
-			}).then(() => {
-				// Failed cleanup keeps both the task and lease, blocking successors.
-				if (this.activePlayerTask !== playerTask && this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
-			});
+			const cleanup = playerTask
+				.stop()
+				.then(
+					() => {
+						if (this.activePlayerTask !== playerTask) return;
+						this.activePlayerTask = null;
+						this.protectStatus = undefined;
+						this.currentTask = null;
+						this.taskTarget = null;
+						if (this.state === "task") this.setState("idle");
+						this.resetIdleTimer();
+					},
+					(error: unknown) => {
+						this.emitEvent(
+							"error",
+							`Protect cleanup failed; retire this deployment: ${String(error)}`,
+						);
+					},
+				)
+				.then(() => {
+					// Failed cleanup keeps both the task and lease, blocking successors.
+					if (
+						this.activePlayerTask !== playerTask &&
+						this.playerTaskCleanup === cleanup
+					)
+						this.playerTaskCleanup = null;
+				});
 			this.playerTaskCleanup = cleanup;
 			return;
 		}
 		this.activePlayerTask = null;
 		if (playerTask) {
-			const cleanup = playerTask.stop().catch((error: unknown) => {
-				this.emitEvent('warning', `Player task cleanup failed: ${String(error)}`);
-			}).finally(() => {
-				if (this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
-			});
+			const cleanup = playerTask
+				.stop()
+				.catch((error: unknown) => {
+					this.emitEvent(
+						"warning",
+						`Player task cleanup failed: ${String(error)}`,
+					);
+				})
+				.finally(() => {
+					if (this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
+				});
 			this.playerTaskCleanup = cleanup;
 		}
 
@@ -587,13 +801,19 @@ export class BotSession {
 			// activeExcavateTask is cleared in the onAbort callback of run().
 		}
 
-		if (this.bot && this.state === 'task' && !playerTask) {
+		if (this.bot && this.state === "task" && !playerTask) {
 			try {
-				const cleanup = Promise.resolve(this.bot.pvp.stop()).catch((error: unknown) => {
-					this.emitEvent('warning', `Combat cleanup failed: ${String(error)}`);
-				}).finally(() => {
-					if (this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
-				});
+				const cleanup = Promise.resolve(this.bot.pvp.stop())
+					.catch((error: unknown) => {
+						this.emitEvent(
+							"warning",
+							`Combat cleanup failed: ${String(error)}`,
+						);
+					})
+					.finally(() => {
+						if (this.playerTaskCleanup === cleanup)
+							this.playerTaskCleanup = null;
+					});
 				this.playerTaskCleanup = cleanup;
 			} catch (_) {
 				/* ignore if pvp not active */
@@ -608,8 +828,8 @@ export class BotSession {
 		this.currentTask = null;
 		this.taskTarget = null;
 
-		if (this.state === 'task') {
-			this.setState('idle');
+		if (this.state === "task") {
+			this.setState("idle");
 		}
 	}
 
@@ -617,13 +837,13 @@ export class BotSession {
 
 	private handleGreeting(username: string, message: string): void {
 		const lower = message.toLowerCase();
-		if (lower.includes('hi bot') || lower.includes('hello bot')) {
+		if (lower.includes("hi bot") || lower.includes("hello bot")) {
 			setTimeout(() => {
 				if (!this.bot) return;
-				this.bot.chat('Hi there!');
+				this.bot.chat("Hi there!");
 				this.callbacks.onChat({
 					username: this.config.botName,
-					message: 'Hi there!',
+					message: "Hi there!",
 					timestamp: Date.now(),
 					isBot: true,
 				});
@@ -633,13 +853,22 @@ export class BotSession {
 
 	private handleChatCommands(username: string, message: string): void {
 		const parsed = parseMinecraftCommand(username, message);
-		if (parsed.kind === 'ignore') return;
-		const result = parsed.kind === 'invalid' ? { ok: false as const, error: parsed.error }
-			: this.commands.submit({ kind: 'minecraft', username }, parsed.action);
+		if (parsed.kind === "ignore") return;
+		const result =
+			parsed.kind === "invalid"
+				? { ok: false as const, error: parsed.error }
+				: this.commands.submit({ kind: "minecraft", username }, parsed.action);
 		if (!result.ok) {
-			this.emitEvent('warning', `Player command denied/rejected for ${username}: ${result.error}`);
+			this.emitEvent(
+				"warning",
+				`Player command denied/rejected for ${username}: ${result.error}`,
+			);
 			if (normalizePlayerName(username) && username === username.trim()) {
-				try { this.bot?.whisper(username, result.error); } catch { /* server may not support /tell */ }
+				try {
+					this.bot?.whisper(username, result.error);
+				} catch {
+					/* server may not support /tell */
+				}
 			}
 		}
 	}
@@ -650,14 +879,14 @@ export class BotSession {
 		this.clearIdleTimer();
 		if (
 			this.destroyed ||
-			this.state === 'disconnected' ||
-			this.state === 'spawning'
+			this.state === "disconnected" ||
+			this.state === "spawning"
 		)
 			return;
 
 		this.idleTimer = setTimeout(() => {
-			if (this.state === 'idle' && this.currentTask === null) {
-				this.emitEvent('warning', 'Idle for 10 minutes — auto-disconnecting.');
+			if (this.state === "idle" && this.currentTask === null) {
+				this.emitEvent("warning", "Idle for 10 minutes — auto-disconnecting.");
 				this.destroy();
 			}
 		}, IDLE_TIMEOUT_MS);
@@ -686,7 +915,7 @@ export class BotSession {
 	};
 
 	private getArmorItems(bot: Bot): ArmorSlot[] {
-		return (['head', 'torso', 'legs', 'feet'] as ArmorSlotId[]).map(
+		return (["head", "torso", "legs", "feet"] as ArmorSlotId[]).map(
 			(slotId) => {
 				const item = bot.inventory.slots[BotSession.ARMOR_SLOT_INDICES[slotId]];
 				return {
@@ -705,25 +934,40 @@ export class BotSession {
 	async unequipAndDropArmor(slot: ArmorSlotId): Promise<void> {
 		const bot = this.bot;
 		if (!bot) return;
+		if (
+			this.manualInventoryBusy ||
+			(this.idleBehaviors && !this.idleBehaviors.prepareForTask())
+		) {
+			this.emitEvent(
+				"warning",
+				"An idle behavior or inventory operation is stopping. Retry the armor action after cleanup.",
+			);
+			return;
+		}
 
 		const slotIndex = BotSession.ARMOR_SLOT_INDICES[slot];
 		const item = bot.inventory.slots[slotIndex];
 		if (!item) return;
+		const inventoryOperation = Symbol("manual inventory");
+		this.manualInventoryBusy = inventoryOperation;
 
 		try {
 			await bot.unequip(slot);
 			const invItem = bot.inventory.items().find((i) => i.type === item.type);
 			if (invItem) await bot.tossStack(invItem);
 			this.emitEvent(
-				'info',
+				"info",
 				`Un-equipped and dropped ${item.displayName ?? item.name}.`,
 			);
 			this.emitArmorUpdate(bot);
 		} catch (err) {
 			this.emitEvent(
-				'error',
+				"error",
 				`Failed to drop armor: ${(err as Error).message}`,
 			);
+		} finally {
+			if (this.manualInventoryBusy === inventoryOperation)
+				this.manualInventoryBusy = null;
 		}
 	}
 
@@ -734,13 +978,13 @@ export class BotSession {
 		this.callbacks.onStateChange();
 	}
 
-	private emitEvent(type: EventLogEntry['type'], message: string): void {
+	private emitEvent(type: EventLogEntry["type"], message: string): void {
 		this.callbacks.onEvent({ type, message, timestamp: Date.now() });
 	}
 
 	private emitSystemChat(message: string): void {
 		this.callbacks.onChat({
-			username: 'System',
+			username: "System",
 			message,
 			timestamp: Date.now(),
 			isBot: true,
@@ -753,14 +997,14 @@ export class BotSession {
 /** Converts raw Node.js network errors into human-readable messages. */
 function friendlyErrorMessage(err: Error & { code?: string }): string {
 	switch (err.code) {
-		case 'ECONNRESET':
-			return 'Connection was reset by the server (ECONNRESET). The server may be offline or unreachable.';
-		case 'ECONNREFUSED':
-			return 'Connection refused (ECONNREFUSED). Check the server IP and port.';
-		case 'ENOTFOUND':
+		case "ECONNRESET":
+			return "Connection was reset by the server (ECONNRESET). The server may be offline or unreachable.";
+		case "ECONNREFUSED":
+			return "Connection refused (ECONNREFUSED). Check the server IP and port.";
+		case "ENOTFOUND":
 			return `Host not found (ENOTFOUND). Check the server address.`;
-		case 'ETIMEDOUT':
-			return 'Connection timed out (ETIMEDOUT). The server may be offline or behind a firewall.';
+		case "ETIMEDOUT":
+			return "Connection timed out (ETIMEDOUT). The server may be offline or behind a firewall.";
 		default:
 			return err.message;
 	}

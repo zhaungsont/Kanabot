@@ -6,6 +6,7 @@ import { MAX_PLAYER_TASK_DISTANCE, resolvePlayerTarget } from '../players/player
 export interface PlayerTaskOutcome {
   level: 'info' | 'warning' | 'error';
   message: string;
+  code?: 'PLAYER_UNREACHABLE';
 }
 
 /** Owns the complete task lifecycle; no sockets, browser state, or session registry. */

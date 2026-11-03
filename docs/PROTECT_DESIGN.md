@@ -103,6 +103,10 @@ The scoped `hasShield` hook returns false to disable this plugin version's fixed
 
 Progress timeout is 30 seconds: escorting within three blocks is healthy; combat requires measurable approach or actual hurt events on the selected mob. Mere proximity across a wall does not reset the watchdog. A stalled mob enters five-second exclusion; an unsuccessful escort/return terminates. A ten-second teardown deadline publishes cleanup trouble without releasing the session's lease; delayed operations remain tracked, and failed cleanup blocks successors until deployment retirement. Explicit stop and automatic safety stop each publish one terminal outcome after successful cleanup.
 
+### Private reachability notification
+
+The current termination policy is retained. A `PLAYER_UNREACHABLE` outcome causes the session to send one private `/tell` after teardown, in addition to the existing warning. It explains that no usable route was found within navigation limits and asks the player to move somewhere accessible and request Protect again. Timeout does not prove universal unreachability. Delivery failure is logged, with no public fallback. This applies to escort/return failure, not a mob's temporary exclusion. The message is marked private in the dashboard mirror.
+
 ## 4. Target validity, leash, and recovery
 
 Initial values are tunable engineering defaults, not performance guarantees:
