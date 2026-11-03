@@ -116,6 +116,8 @@ Define a capability contract with a versioned ID, validated parameters/configura
 
 The resource arbiter controls movement, combat, look direction, equipment, inventory, and interaction as needed. Local MVP can implement a small exclusive task model with non-conflicting passive chat/observation; expand concurrency only when demonstrated requirements demand it.
 
+The proposed [Protect overhaul](PROTECT_DESIGN.md) applies those boundaries to escort/combat transitions and threat selection. Its initial equipment integration is a read-only placeholder; [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md) documents the separately deferred equipment work. Future player-threat defense belongs to Protect's invocation authority, without a second RBAC check; the first implementation excludes player candidates. These are design proposals, not implemented runtime behavior.
+
 Examples of policies:
 
 - Follow and excavation cannot independently command movement at the same time.

@@ -238,15 +238,21 @@ Transitions:
 - Task modules use non-destructive movement, own their listeners/timers, await asynchronous startup/cleanup, and restore previous pathfinding/combat settings before new tasks are accepted.
 - Server PvP rules still apply; an accepted command is not a guarantee that damage is permitted.
 
-#### Guard
+#### Guard (current implementation)
 
-- Runs every 500ms via `mineflayer-pvp`:
-  1. Find nearest hostile mob within **5 blocks** of the guarded player
+- Runs every 333ms via `mineflayer-pvp`:
+  1. Find nearest hostile mob within **10 blocks** of the guarded player
   2. If found: `bot.pvp.attack(mob)` — automatically approaches and attacks the target (movement included)
   3. If none: `bot.pvp.stop()` + `GoalFollow(playerEntity, 3)` — stays within 3 blocks of the guarded player
 - Hostile mobs are detected by `entity.type === 'hostile'`
 - On guard start: automatically equips the best sword or axe from inventory (see Weapon Manager)
 - While guarding: re-evaluates and upgrades weapon whenever the bot picks up a new item
+
+#### Protect overhaul (proposed; awaiting approval)
+
+The full target specification is [PROTECT_DESIGN.md](PROTECT_DESIGN.md): a modular ProtectTask with serialized escort/combat/return states, bounded threat selection, pursuit limits, and cleanup. It includes a read-only equipment placeholder; the real selection/equipping module is deferred in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md). The current Guard implementation above remains active until implementation is approved.
+
+Initial Protect targets hostile mobs only. Its invocation permission covers all eligible defensive actions, including future player-target defense without a second RBAC check; target policies and server restrictions remain independent execution constraints.
 
 #### Weapon Manager (Guard)
 

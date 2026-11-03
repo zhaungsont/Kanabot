@@ -228,7 +228,7 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Deploy bot** to any offline-mode Minecraft server
 - **Real-time chat** — mirror in-game chat; send messages from browser
 - **Follow** — bot follows a specified player, staying within 3 blocks
-- **Guard** — bot protects a player: attacks hostile mobs within 5 blocks via `mineflayer-pvp`, otherwise shadows them within 3 blocks
+- **Guard** — bot protects a player: attacks hostile mobs within 10 blocks via `mineflayer-pvp`, otherwise shadows them within 3 blocks
 - **Weapon auto-equip** — on guard start, bot equips the best sword or axe from inventory; upgrades automatically when a better weapon is picked up
 - **Armor auto-equip** — on spawn, bot equips the best available armor via `mineflayer-armor-manager`
 - **Stop** — cancel current task, return to idle
@@ -240,6 +240,8 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Player roles** — assign usernames Visitor, Crew, or Owner on the dashboard, independently of the live roster. Visitor may follow; Crew adds guard/excavation; Owner adds attack/stop. Changes affect new commands while existing tasks continue.
 
 Roles and inherited grants are defined in `backend/src/access/roleCatalog.ts`; task-to-permission mappings are in `backend/src/commands/taskPermissions.ts`. Assignments are held in memory by `PlayerRoleStore` for each bot session and survive browser refresh, but not bot retirement or backend restart. Dashboard administrators remain independent of Minecraft player roles.
+
+The proposed [Protect overhaul](docs/PROTECT_DESIGN.md) and [equipment-module follow-up](docs/EQUIPMENT_DESIGN.md) are awaiting approval. Protect's first implementation will use a read-only equipment placeholder; automatic equipment selection is a separate later scope.
 
 ### Player list and task modules
 

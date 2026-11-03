@@ -30,6 +30,8 @@ Suggested fix: cancellation checks after every asynchronous boundary, active dig
 
 Suggested fix: extract guard and equipment capabilities, standardize asynchronous task lifecycle/cancellation, and retain a small task coordinator with explicit resource ownership. Keep Mineflayer dependencies inside runtime modules; a wrapper around every library call is unnecessary.
 
+Detailed proposals: [Protect overhaul](PROTECT_DESIGN.md) and [equipment follow-up](EQUIPMENT_DESIGN.md). Both await approval. The planned Protect implementation includes only a read-only equipment interface/placeholder; the actual equipping module and migration of other inventory paths remain separately deferred.
+
 ## KI-004 — Frontend client behavior remains embedded in React hooks
 
 **Open · Medium · Architecture**

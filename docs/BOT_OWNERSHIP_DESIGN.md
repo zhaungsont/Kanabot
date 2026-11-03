@@ -57,6 +57,8 @@ To add a new operation later: declare its shared permission ID, map the operatio
 
 No requester/initiator comparison affects these grants. Feature availability, valid targets, pathfinding limits, region bounds, and busy-task rejection remain separate execution checks. Stop task is different from retiring a bot through Disconnect Bot. Runtime safety stops remain available independently of player roles.
 
+For the proposed [Protect capability](PROTECT_DESIGN.md), invocation permission authorizes the eligible defensive behavior of that task. Future automatic player-target defense will not require another RBAC check or standalone Attack permission. The first Protect implementation targets mobs only; future player eligibility/friendly exclusions and server PvP rules remain target/execution policy. Standalone Attack continues to have its own permission.
+
 ## 5. Command and execution boundaries
 
 ```mermaid

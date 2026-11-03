@@ -8,6 +8,15 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Design proposals
+
+- Added Protect target-prioritization flowchart and explicit continuous scan/coalescing cadence; clarified which improvements go beyond the existing 333 ms nearest-mob loop. Documentation only.
+
+- Detailed Protect's player-centered 3D distance calculation, API-backed threat evidence/ranking, and transition/terminal teardown inventory, including partial-start failures and delayed plugin cleanup. Documentation only.
+
+- Added detailed Protect overhaul specification covering escort/combat state transitions, threat evidence/ranking, chase limits, lifecycle cleanup, and future player defense under Protect's existing invocation authority.
+- Added a separate equipment-module plan. The initial Protect scope includes only a read-only readiness placeholder; automatic equipment selection/mutations and player-threat targeting are deferred. No runtime changes in this documentation update.
+
 ### Added
 
 - Gameplay RBAC with fixed inherited Visitor/Crew/Owner grants, a task-permission catalog, and session-scoped username assignments.
