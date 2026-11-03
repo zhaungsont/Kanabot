@@ -1,6 +1,6 @@
 # Kanabot Architecture and Delivery Design
 
-Status: proposed design for discussion; not an implemented architecture. Updated: 2026-10-20.
+Status: target architecture with the local lifecycle foundation implemented; other proposed components are not yet implemented. Updated: 2026-11-03.
 
 This document explains how to deliver [ROADMAP.md](ROADMAP.md) through Local MVP, Local Stable (1.0), Cloud MVP, and Cloud Stable (1.0) with one application architecture. It describes boundaries to establish early, infrastructure to add only when needed, and the checks required to keep local/cloud behavior aligned.
 
@@ -189,11 +189,22 @@ A managed orchestration cluster, separate broker, and multi-region data layer ar
 
 ## 11. Migration and verification plan
 
-The repository currently constructs BotSession directly from a browser socket, uses socket IDs as session identity, stores sessions in memory, and destroys them on socket disconnect. The roadmap requires a new lifecycle around that existing behavior; it is not already cloud-ready.
+The local runtime now has browser-independent execution. `BotManager` owns stable bot sessions without importing Socket.IO. `sessions/sessionHandlers.ts` attaches transport observers; socket disconnect removes the observer and its roster interest without stopping the bot. The registry, runtime, and snapshots remain in one process and in memory, so this is a foundation for the target architecture, not durable cloud execution.
+
+### Implemented local lifecycle foundation
+
+- The browser prepares a UUID and a cryptographically random 256-bit access token and saves the handle before sending create. Retrying the same create returns the existing runtime instead of spawning another bot. The legacy field name `sessionId` now identifies the bot session, not a socket.
+- A new connection presents the handle to resume. The manager verifies a SHA-256 token hash and attaches a viewer. All dashboard command handlers require an attached authorized viewer; knowing the public ID alone grants no control. Tokens are not included in state, history, logs, or URLs.
+- Reattachment returns current bot state, cached armor, up to 200 chat messages and 150 events. History is bounded and ephemeral. Player telemetry remains opt-in; the final interested viewer leaving stops roster sampling, not execution.
+- The frontend stores one handle per browser origin/backend URL in localStorage through an injected, React-independent storage module. Route unmount, refresh, tab closure, and transport loss do not send a bot-stop command. Reopening the dashboard resumes the saved handle. Storage must be available before deployment; clearing it loses this local capability.
+- Explicit Disconnect Bot retires the session for all viewers and cancels pending retries. A retired ID cannot replay a create during this backend lifetime. The existing ten-minute idle policy still applies without viewers; observation does not renew it. Active tasks can continue without a dashboard.
+- Common JSON data, lifecycle responses, and socket interfaces are shared under `shared/`. Dates use ISO strings on the wire. Runtime schemas and uniform legacy-command outcomes remain follow-up work.
+
+This change is worth establishing before the UI overhaul: execution ownership, stable identity, and observer separation also apply to persisted accounts and remote workers. The local bearer capability is temporary scaffolding, not the proposed account system. Backend restart still loses all sessions; missing handles are cleared on resume. Multi-bot account discovery, worker isolation, durable replay protection, and quotas remain future work. Detailed deferred defects are tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 Implement in small, verifiable slices:
 
-1. Extract shared schemas and transport-independent runtime callbacks; retain current behavior while removing socket objects from core task logic.
+1. Complete shared runtime schemas and command/client extraction around the implemented stable-ID, observer, and shared-type boundaries.
 2. Introduce authentication, persisted owners/server/bot definitions, stable IDs, and command authorization. Update the dashboard to target bot IDs and reconnect to snapshots.
 3. Move execution behind the runner/process contract. Add run records, desired/observed state, command persistence, admission, stop semantics, and recovery.
 4. Harden assistance and add the bounded game using the capability/arbiter interface. Then add AI and observation through their adapters.

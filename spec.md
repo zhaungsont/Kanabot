@@ -1,7 +1,7 @@
 # Kanabot — Technical Specification (MVP)
 
 > Version: 0.2.0  
-> Last updated: 2026-05-09
+> Last updated: 2026-11-03
 
 ---
 
@@ -27,7 +27,7 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 
 - **Frontend ↔ Backend**: Socket.IO (WebSocket with HTTP long-poll fallback)
 - **Backend ↔ Minecraft**: mineflayer TCP connection
-- **One socket connection = one potential bot session** (enforced by BotManager)
+- **Bot sessions outlive viewer sockets**: stable IDs identify execution; each socket attaches to one authorized session. Several viewers can attach to the same bot.
 
 ---
 
@@ -50,7 +50,9 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 
 | Bot State | UI Shown |
 |---|---|
-| `disconnected` | BotDeployForm only |
+| No saved bot | BotDeployForm |
+| Restoring saved bot | Reconnect status; deployment blocked until resolved |
+| `disconnected` existing bot | Existing bot panel and explicit Disconnect Bot control |
 | `spawning` | Loading indicator + EventLog |
 | `idle` / `task` | ActionPanel + ChatBox + EventLog + Disconnect button |
 | `dead` | EventLog + Reconnecting indicator |
@@ -113,7 +115,7 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 - Per-player controls: **Whisper**, **Follow**, and **Attack**. Attack has an inline confirmation. Self actions and untrackable follow/attack targets are disabled; creative-mode attacks are rejected. Starting tasks requires idle state and completed cleanup of the previous task.
 - Follow and attack use transport-independent modules and shared target/lifecycle checks: tracked entity, same observable dimension, loaded target chunk, 64-block distance cap, path failure/timeout, and a 30-second movement-progress watchdog. Dynamic follow does not continually reset its goal. Scoped pathfinding limits and non-destructive movement settings are restored after cleanup.
 - Whispers contain 1–200 characters on one line, use `bot.whisper()`, and do not require the target's entity to be tracked. Whispers can run during other tasks. Command acknowledgement is not a delivery receipt. Sent/received whispers are marked private in the chat mirror.
-- The new player endpoints and the existing task-action endpoint verify socket ownership of the session. This does not add persistent accounts or change the current browser-disconnect/session lifetime model.
+- Every dashboard command requires an authorized attached viewer. Transport disconnect removes that viewer and its roster interest without ending execution. Accounts and durable sessions are not yet implemented.
 - Shared JSON contracts: `shared/playerContracts.d.ts`; backend modules: `backend/src/players/`, `backend/src/tasks/{trackedPlayerTask,followTask,attackTask}.ts`; frontend: `usePlayerList` and `PlayerListPanel`.
 
 #### AdBanner
@@ -165,8 +167,9 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 
 | Event | Payload | Description |
 |---|---|---|
-| `bot:create` | `BotConfig, callback(sessionId, error?)` | Spawn a new bot |
-| `bot:disconnect` | `sessionId: string` | Manually disconnect bot |
+| `bot:create` | `BotConfig, BotSessionHandle, callback(SessionResult<BotSessionSnapshot>)` | Idempotently create and attach to a bot; same handle does not spawn twice |
+| `bot:resume` | `BotSessionHandle, callback(SessionResult<BotSessionSnapshot>)` | Authorize a new viewer and return current state, armor, and bounded history |
+| `bot:disconnect` | `sessionId, callback(SessionResult<null>)` | Explicitly stop and retire the attached bot for all viewers |
 | `bot:chat` | `sessionId: string, message: string` | Send chat to game |
 | `bot:action` | `sessionId: string, action: BotAction` | Issue a task or stop |
 | `bot:players:subscribe` | `sessionId, enabled, callback(result)` | Enable/disable the owned session's roster stream |
@@ -177,6 +180,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 | Event | Payload | Description |
 |---|---|---|
 | `bot:state` | `BotSessionInfo` | Full bot state snapshot |
+| `bot:removed` | `sessionId` | Bot retired; clear the matching saved handle |
 | `bot:chat` | `ChatMessage` | In-game chat event (or system message) |
 | `bot:event` | `EventLogEntry` | Lifecycle event for EventLog |
 | `bot:error` | `string` | Fatal error message |
@@ -281,7 +285,10 @@ Transitions:
 | Retry on unexpected disconnect | Up to 5 attempts with exponential backoff (5s, 10s, 15s, 20s, 25s) |
 | No retry on kicked/banned | Session ends immediately |
 | One task at a time | `task` state can only be entered from `idle` |
-| One bot per socket | BotManager enforces one session per socket connection |
+| Viewer lifetime | Socket loss/unmount detaches observation; the bot keeps running |
+| Bot identity | UUID independent of socket ID; resume requires its secret capability |
+| Explicit retirement | Disconnect Bot cancels retries and invalidates all viewers; retired creates cannot replay in this process |
+| Roster demand | Sampling continues while at least one attached viewer requests it |
 
 ---
 
@@ -297,7 +304,7 @@ interface BotSessionInfo {
   state: BotState;
   currentTask: TaskType;
   taskTarget: string | null;
-  spawnedAt: Date | null;
+  spawnedAt: string | null; // ISO timestamp
   uptime: number;         // seconds since spawn
 }
 
@@ -320,10 +327,12 @@ interface EventLogEntry {
 ## 6. Security & Constraints
 
 - **Offline mode only**: bots use `auth: 'offline'` — no Microsoft accounts in MVP
-- **No authentication**: dashboard is publicly accessible in MVP
+- **Local access only**: no user accounts; reattachment requires a 256-bit bearer capability saved in browser storage. Public bot IDs grant no access. This is not a public SaaS identity model.
 - **Environment variables**: all config in `.env` (never committed)
 - **CORS**: backend restricts origins via `CORS_ORIGIN` env var
 - **No persistent storage**: all state is in-memory; restarts clear all sessions
+
+The browser persists one `BotSessionHandle` per origin/backend before create, allowing refresh/navigation and lost-acknowledgement recovery. Resume snapshots retain at most 200 chats and 150 events; tokens are excluded. Shared data/event definitions live in `shared/`. Frontend and backend must be upgraded together for the new lifecycle protocol. See [ARCHITECTURE.md](ARCHITECTURE.md) for lifecycle design and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for deferred validation, cancellation, client-layer, and armor issues.
 
 ---
 

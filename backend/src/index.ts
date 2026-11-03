@@ -40,11 +40,9 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import { BotManager } from './botManager.js';
+import { registerSessionHandlers } from './sessions/sessionHandlers.js';
 import { registerPlayerHandlers } from './players/playerHandlers.js';
 import {
-  BotConfig,
-  BotAction,
-  ArmorSlotId,
   ServerToClientEvents,
   ClientToServerEvents,
   InterServerEvents,
@@ -78,67 +76,7 @@ io.on('connection', (socket) => {
   console.log(`[Socket] Connected: ${socket.id}`);
   registerPlayerHandlers(socket, botManager);
 
-  socket.on('bot:create', (config: BotConfig, callback) => {
-    if (!config.serverHost) {
-      callback(null, 'Server host is required.');
-      return;
-    }
-
-    try {
-      const normalizedConfig: BotConfig = {
-        serverHost: config.serverHost.trim(),
-        serverPort: config.serverPort || undefined,
-        botName: config.botName?.trim() || 'mc_bot',
-        version: config.version?.trim() || undefined,
-      };
-
-      const { sessionId, session } = botManager.createSession(socket, normalizedConfig);
-      session.spawn();
-      callback(sessionId);
-    } catch (err) {
-      console.error('[BotCreate] Error:', err);
-      callback(null, String(err));
-    }
-  });
-
-  socket.on('bot:disconnect', (sessionId: string) => {
-    const session = botManager.getSession(sessionId);
-    session?.disconnect();
-  });
-
-  socket.on('bot:chat', (sessionId: string, message: string) => {
-    const session = botManager.getSession(sessionId);
-    if (!session) return;
-    session.sendChat(message);
-    session.resetIdleTimer();
-  });
-
-  socket.on('bot:action', (sessionId: string, action: BotAction) => {
-    const session = botManager.getSessionBySocketId(socket.id);
-    if (!session || session.sessionId !== sessionId) return;
-
-    if (action.type === 'excavate') {
-      session.performAction('excavate', undefined, action.region);
-    } else if (action.type === 'stop') {
-      session.performAction('stop');
-    } else {
-      session.performAction(action.type, action.target);
-    }
-
-    session.resetIdleTimer();
-  });
-
-  socket.on('bot:unequip', (sessionId: string, slot: ArmorSlotId) => {
-    const session = botManager.getSession(sessionId);
-    if (!session) return;
-    session.unequipAndDropArmor(slot).catch(() => {/* already logged inside */});
-    session.resetIdleTimer();
-  });
-
-  socket.on('disconnect', () => {
-    console.log(`[Socket] Disconnected: ${socket.id}`);
-    botManager.destroyBySocketId(socket.id);
-  });
+  registerSessionHandlers(socket, botManager);
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────

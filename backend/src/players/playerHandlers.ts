@@ -7,8 +7,7 @@ type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerE
 /** Socket adapter only. Runtime behavior remains in roster/task/whisper modules. */
 export function registerPlayerHandlers(socket: AppSocket, manager: BotManager): void {
   const ownedSession = (sessionId: unknown) => {
-    const session = manager.getSessionBySocketId(socket.id);
-    return typeof sessionId === 'string' && session?.sessionId === sessionId ? session : undefined;
+    return manager.getSessionForViewer(socket.id, sessionId);
   };
   const reply = (callback: unknown, result: PlayerCommandResult): void => {
     if (typeof callback === 'function') callback(result);
@@ -18,7 +17,7 @@ export function registerPlayerHandlers(socket: AppSocket, manager: BotManager): 
     const session = ownedSession(sessionId);
     if (!session) return reply(callback, { ok: false, error: 'Session not found or not owned by this connection.' });
     if (typeof enabled !== 'boolean') return reply(callback, { ok: false, error: 'Invalid player-list subscription.' });
-    reply(callback, session.setPlayersSubscribed(enabled));
+    reply(callback, manager.setPlayersSubscribed(socket.id, session.sessionId, enabled));
   });
 
   socket.on('bot:playerAction', (sessionId, command, callback) => {

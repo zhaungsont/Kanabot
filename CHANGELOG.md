@@ -10,6 +10,10 @@ Format: `[version] — YYYY-MM-DD`
 
 ### Added
 
+- Browser-independent bot lifecycle: stable IDs, capability-authorized resume, bounded snapshots, and saved browser handles.
+- Transport-independent session registry, per-viewer roster subscriptions, shared bot/lifecycle/socket contracts, and lifecycle regression tests.
+- `KNOWN_ISSUES.md` tracking deferred architecture findings and confirmed task/armor defects.
+
 - Opt-in player roster with server-provided skin icons, available health/location, search/pagination, and three-second changed-only updates that pause when closed or hidden.
 - Private whisper, follow, and confirmed attack controls; private messages are labeled in the chat mirror.
 - Transport-independent roster/target/whisper modules and follow/attack tasks with scoped path budgets, chunk/distance checks, target-loss handling, and asynchronous cleanup.
@@ -18,7 +22,8 @@ Format: `[version] — YYYY-MM-DD`
 ### Changed
 
 - Existing follow controls and in-game follow commands use the new follow task module.
-- Player endpoints and task commands verify current socket ownership; disconnect clears stale frontend bot state.
+- Dashboard commands require an authorized attached viewer. Socket disconnect detaches the viewer; navigation and refresh no longer stop the bot. Explicit Disconnect Bot retires it and cancels pending retries.
+- Lifecycle wire protocol changed: create now takes a saved handle and returns a snapshot result; resume is explicit and bot disconnect is acknowledged. Update frontend and backend together; the old socket-owned protocol cannot resume these sessions.
 - New tasks wait for previous combat/excavation cleanup; passive looking yields to active tasks.
 
 ## [0.2.0] — 2026-05-09

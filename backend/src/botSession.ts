@@ -56,6 +56,7 @@ export class BotSession {
 
 	private bot: Bot | null = null;
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
+	private retryTimer: ReturnType<typeof setTimeout> | null = null;
 	private guardInterval: ReturnType<typeof setInterval> | null = null;
 	private guardWeaponListener: ((collector: any) => void) | null = null;
 	private activePlayerTask: TrackedPlayerTask | null = null;
@@ -93,7 +94,7 @@ export class BotSession {
 			state: this.state,
 			currentTask: this.currentTask,
 			taskTarget: this.taskTarget,
-			spawnedAt: this.spawnedAt,
+			spawnedAt: this.spawnedAt?.toISOString() ?? null,
 			uptime: this.uptime,
 		};
 	}
@@ -290,6 +291,7 @@ export class BotSession {
 
 	private handleDisconnect(shouldRetry: boolean): void {
 		if (this.destroyed) return;
+		this.clearRetryTimer();
 		this.playerRoster?.dispose();
 		this.playerRoster = null;
 		this.bot = null;
@@ -302,8 +304,12 @@ export class BotSession {
 				'info',
 				`Retry ${this.retryCount}/${MAX_RETRY_ATTEMPTS} in ${delay / 1000}s...`,
 			);
-			setTimeout(() => {
-				if (!this.destroyed) this.createBot();
+			this.retryTimer = setTimeout(() => {
+				this.retryTimer = null;
+				if (!this.destroyed && this.state === 'disconnected') {
+					this.setState('spawning');
+					this.createBot();
+				}
 			}, delay);
 		} else if (this.retryCount >= MAX_RETRY_ATTEMPTS) {
 			this.emitEvent('error', 'Max retry attempts reached. Session ended.');
@@ -312,6 +318,7 @@ export class BotSession {
 	}
 
 	disconnect(): void {
+		this.clearRetryTimer();
 		this.stopTask();
 		this.playerRoster?.dispose();
 		this.playerRoster = null;
@@ -331,6 +338,7 @@ export class BotSession {
 	}
 
 	destroy(): void {
+		if (this.destroyed) return;
 		this.destroyed = true;
 		this.disconnect();
 		this.callbacks.onDestroy();
@@ -768,7 +776,7 @@ export class BotSession {
 		this.idleTimer = setTimeout(() => {
 			if (this.state === 'idle' && this.currentTask === null) {
 				this.emitEvent('warning', 'Idle for 10 minutes — auto-disconnecting.');
-				this.disconnect();
+				this.destroy();
 			}
 		}, IDLE_TIMEOUT_MS);
 	}
@@ -778,6 +786,11 @@ export class BotSession {
 			clearTimeout(this.idleTimer);
 			this.idleTimer = null;
 		}
+	}
+
+	private clearRetryTimer(): void {
+		if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+		this.retryTimer = null;
 	}
 
 	private clearGuardInterval(): void {

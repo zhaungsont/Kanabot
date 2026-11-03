@@ -62,7 +62,8 @@ sequenceDiagram
     participant MC as Minecraft Server
 
     U->>F: Fill in Server IP + Bot Name, click Deploy
-    F->>B: socket.emit('bot:create', config)
+    F->>F: Save stable bot handle locally
+    F->>B: socket.emit('bot:create', config, handle, callback)
     B->>B: BotManager.createSession()
     B->>MC: mineflayer.createBot()
     MC-->>B: 'spawn' event
@@ -192,7 +193,15 @@ VITE_BACKEND_URL=http://localhost:3001
 
 The roster reads Mineflayer's existing player cache; it does not query the Minecraft server or load chunks. It samples at most once every three seconds while the panel is open and the browser tab is visible, and sends only changed snapshots. Untracked players stay listed with unknown coordinates/health. Skin icons use the skin texture supplied by the server, with an initial fallback if none is available. Health is explicitly server-reported and can be hidden or altered by the server.
 
-`backend/src/players/` contains roster projection, target validation, whisper handling, and the socket adapter. `backend/src/tasks/followTask.ts` and `attackTask.ts` share task lifecycle/cleanup in `trackedPlayerTask.ts`; these runtime modules do not depend on Socket.IO. JSON-only interfaces live in `shared/playerContracts.d.ts`. This establishes migration boundaries while retaining the current in-process, socket-owned session registry; persistent workers/accounts described in `ARCHITECTURE.md` are still proposed work.
+`backend/src/players/` contains roster projection, target validation, whisper handling, and the socket adapter. `backend/src/tasks/followTask.ts` and `attackTask.ts` share task lifecycle/cleanup in `trackedPlayerTask.ts`; these runtime modules do not depend on Socket.IO. JSON-only interfaces live in `shared/`. The in-process registry owns execution independently of browser sockets; persistent workers/accounts described in `ARCHITECTURE.md` remain proposed work.
+
+### Leaving and returning to the dashboard
+
+Navigation, refresh, tab closure, and temporary network loss detach the viewer; they do not stop the bot. The dashboard saves a stable bot ID and secret access token before deployment and automatically reattaches on return, restoring current state, cached armor, and bounded recent chat/events. **Disconnect Bot** explicitly stops and retires that bot for every attached viewer. The existing ten-minute idle timeout still applies; active tasks can continue without viewers.
+
+This is a local, memory-only foundation: backend restarts lose sessions/history. One bot handle is remembered per browser origin and backend URL; tabs with the same handle can control that bot. Clearing browser storage loses access to it. The token is a local bearer capability, not a user account; keep this deployment local until hosted identity and operational controls are implemented. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for deferred bugs and architecture work.
+
+Player contracts are the shared shapes for player records, roster snapshots, commands, and results. For example, `{ type: 'follow', target: 'Alex' }` describes an intent; the follow task implements it. These TypeScript definitions let the UI change without copying Mineflayer behavior, but do not themselves validate untrusted network input.
 
 Follow and attack require a currently tracked player with a loaded target chunk within 64 blocks. They do not find hidden players or navigate portals. A dynamic follow goal tracks movement without restarting its search every second. Both tasks stop on target loss/death, bot dimension change/disconnect/death, failed paths, or 30 seconds without movement progress when outside the follow radius. Their pathfinding budgets are scoped and restored after cleanup; ordinary follow/attack will not dig or pillar through terrain. Stop cleanup must finish before another task can start.
 

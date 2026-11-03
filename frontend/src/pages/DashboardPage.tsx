@@ -18,6 +18,9 @@ export default function DashboardPage() {
     eventLog,
     deployError,
     isDeploying,
+    isRestoring,
+    hasSavedSession,
+    resumeBot,
     armorItems,
     deployBot,
     disconnectBot,
@@ -28,9 +31,9 @@ export default function DashboardPage() {
     playerList,
   } = useBotSession();
 
-  const isActive = botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
+  const isActive = connected && !isRestoring && botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
   const isSpawning = isDeploying || botInfo?.state === 'spawning';
-  const showPanel = isActive || isSpawning || (botInfo?.state === 'dead');
+  const showPanel = botInfo !== null || isSpawning;
   const chatEnabled = isActive;
 
   return (
@@ -58,6 +61,11 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="dashboard-main" style={styles.main}>
+        {hasSavedSession && <div style={{ gridColumn: '1 / -1' }} role="status">
+          {isRestoring ? 'Reconnecting to your bot…' : 'Your bot runs independently of this page. Use Disconnect Bot to stop it.'}
+          {deployError && <p role="alert">{deployError}</p>}
+          {!isRestoring && !isDeploying && connected && <button style={styles.backBtn} onClick={resumeBot}>Reconnect to bot</button>}
+        </div>}
         {showPanel && (
           <div style={{ gridColumn: '1 / -1' }}>
             <PlayerListPanel
@@ -79,7 +87,7 @@ export default function DashboardPage() {
           {!showPanel ? (
             <BotDeployForm
               onDeploy={deployBot}
-              isDeploying={isSpawning}
+              isDeploying={isSpawning || isRestoring || !connected || hasSavedSession}
               error={deployError}
             />
           ) : (

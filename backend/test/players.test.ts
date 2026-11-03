@@ -119,7 +119,7 @@ test('player transport rejects cross-session access and malformed commands', () 
     handlers.set(event, callback); return socket;
   }) as typeof socket.on;
   let calls = 0;
-  const manager = { getSessionBySocketId: () => ({ sessionId: 'attacker', performPlayerCommand: () => { calls++; return { ok: true }; }, setPlayersSubscribed: () => { calls++; return { ok: true }; } }) };
+  const manager = { getSessionForViewer: (_viewer: string, id: unknown) => id === 'attacker' ? { sessionId: 'attacker', performPlayerCommand: () => { calls++; return { ok: true }; } } : undefined };
   registerPlayerHandlers(socket as never, manager as unknown as BotManager);
   let outcome: unknown;
   handlers.get('bot:playerAction')!('victim', { type: 'attack', target: 'Alex' }, (result: unknown) => { outcome = result; });

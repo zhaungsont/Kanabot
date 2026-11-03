@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
+import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/socketContracts.js';
 import type { PlayerCommand, PlayerCommandResult, PlayerListSnapshot } from '../types';
 
 interface Options {
-  socket: Socket | null;
+  socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   sessionId: string | null;
   active: boolean;
 }

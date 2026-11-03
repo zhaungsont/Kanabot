@@ -8,7 +8,7 @@ interface ActionPanelProps {
   onDisconnect: () => void;
 }
 
-function useUptime(spawnedAt: Date | null): string {
+function useUptime(spawnedAt: string | null): string {
   const [secs, setSecs] = useState(0);
 
   useEffect(() => {
