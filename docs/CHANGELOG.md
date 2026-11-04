@@ -8,6 +8,11 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Bot Upkeep proposal — 2026-11-04
+
+- Revised the API/source-backed proposal around disjoint, coexisting Idle Behaviors and Bot Upkeep. Upkeep includes only Auto-eat/Auto-armor; Fight/Flight and planned Avoid drowning are idle-only, with Sleep marked TODO.
+- Specified why both libraries need an application coordination layer, and defined generic task item requirements with verified post-meal reconciliation for all current/future tasks. Removed the broader candidate catalog. Documentation only; no runtime migration is implemented.
+
 ### Hunger telemetry and idle-behavior fixes — 2026-11-04
 
 - Added bot hunger icons and available saturation to the player list, using the existing lazy three-second sampling. Other players' hunger is left unknown.

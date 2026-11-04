@@ -127,6 +127,8 @@ Examples of policies:
 
 Implemented [idle behaviors](IDLE_BEHAVIORS.md) occupy the same local movement/inventory ownership boundary while no task is active. `IdleBehaviors`, `SelfDefenseReaction`, and an auto-eat adapter own their asynchronous work and emit shared status; the UI only configures/renders it. Self-defense has no requester or gameplay RBAC check. Configuration requires existing deployment access. Task requests interrupt idle work but cannot acquire resources until cleanup settles; current synchronous commands return a retry notice during that interval. This adds no general scheduler or new cloud infrastructure.
 
+[Bot Upkeep](BOT_UPKEEP_DESIGN.md) proposes two coexisting modules with disjoint features: Idle Behaviors owns idle-only Fight/Flight, planned Avoid drowning and Sleep (TODO); Bot Upkeep owns only Auto-eat and Auto-armor, eligible during or outside tasks. A small local resource arbiter, cooperative yields and a generic task-published item requirement support verified equipment reconciliation after eating. This applies to all tasks, including future tool-dependent tasks, without food code importing task implementations. Uncontrolled plugin writers and legacy task cancellation boundaries must be migrated before during-task support is advertised; the proposal does not implement that migration.
+
 Games use the same runtime capabilities, with participant permissions, start/stop rules, and bounded outcomes. Add a coordination module for small bot groups in Local Stable. Real-time per-bot reactions remain local; matchmaking/rankings and distributed match infrastructure are future product scope.
 
 ## 8. AI, observation, integrations, and advertising

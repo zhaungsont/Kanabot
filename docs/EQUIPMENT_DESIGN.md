@@ -43,6 +43,8 @@ The future real module must additionally cancel its reconciliation/debounce/retr
 
 Idle Auto-eat is separately authorized and implemented through the library adapter described in [IDLE_BEHAVIORS.md](IDLE_BEHAVIORS.md). It temporarily equips food and awaits restoration, with a cleanup gate before tasks or self-defense acquire execution. This does not add weapon ranking or implement the deferred equipment coordinator. Protect's equipment port remains read-only; legacy passive armor/Attack/mining paths still need explicit migration.
 
+The proposed [Bot Upkeep design](BOT_UPKEEP_DESIGN.md) limits upkeep features to Auto-eat and Auto-armor and keeps Idle Behaviors separate. It defines a generic ExecutionContext item requirement for every task, including future tasks, and an EquipmentService that re-resolves and verifies that current requirement after every meal attempt before hand-dependent task work resumes. This covers best tools, specific items, empty hands and unrestricted hands; food code never branches on task names. Existing eating/armor libraries require this coordination layer and controlled executors. The proposal does not implement or authorize the deferred equipment module.
+
 ## 3. Planned real equipment implementation
 
 ### Observation

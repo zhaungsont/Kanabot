@@ -12,6 +12,8 @@ Kanabot is a web platform that lets Minecraft players deploy, configure, and con
 
 For gameplay roles, permission definitions, and the dashboard role editor, see [BOT_OWNERSHIP_DESIGN.md](docs/BOT_OWNERSHIP_DESIGN.md).
 
+The proposed [Bot Upkeep design](docs/BOT_UPKEEP_DESIGN.md) separates coexisting Idle Behaviors (only outside tasks) from Auto-eat/Auto-armor Upkeep (during or outside supported tasks). It defines generic task item requirements and coordinated restoration after eating. This is a future design; the implemented automatic food/defense controller is still idle-only.
+
 ```text
 Kanabot/
 ├── AGENTS.md                   # Repository-wide agent instructions
