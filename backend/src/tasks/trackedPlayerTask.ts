@@ -2,6 +2,7 @@ import type { Bot, Player } from 'mineflayer';
 import type { Entity } from 'prismarine-entity';
 import type { Movements, Pathfinder } from 'mineflayer-pathfinder';
 import { MAX_PLAYER_TASK_DISTANCE, resolvePlayerTarget } from '../players/playerTarget.js';
+import { EquipmentIntent, type EquipmentOwner, type EquipmentService } from '../runtime/equipment.js';
 
 export interface PlayerTaskOutcome {
   level: 'info' | 'warning' | 'error';
@@ -10,7 +11,12 @@ export interface PlayerTaskOutcome {
 }
 
 /** Owns the complete task lifecycle; no sockets, browser state, or session registry. */
-export abstract class TrackedPlayerTask {
+export abstract class TrackedPlayerTask implements EquipmentOwner {
+  readonly equipmentIntent = new EquipmentIntent();
+  protected readonly cancellation = new AbortController();
+  protected paused = false;
+  private pausing: Promise<boolean> | null = null;
+  get active(): boolean { return this.running && !this.cancellation.signal.aborted; }
   protected running = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private beginning: Promise<void> = Promise.resolve();
@@ -26,6 +32,7 @@ export abstract class TrackedPlayerTask {
     protected readonly bot: Bot,
     readonly target: string,
     private readonly onFinished: (outcome: PlayerTaskOutcome) => void,
+    protected readonly equipmentService?: EquipmentService,
   ) {}
 
   start(): Promise<void> {
@@ -72,6 +79,30 @@ export abstract class TrackedPlayerTask {
 
   protected abstract begin(entity: Entity): void | Promise<void>;
 
+  pauseForUpkeep(_signal: AbortSignal): Promise<boolean> {
+    if (this.pausing) return this.pausing;
+    if (!this.active) return Promise.resolve(false);
+    this.paused = true;
+    this.pausing = (async () => {
+      await this.beginning;
+      if (!this.active) return false;
+      await this.suspendMotion();
+      return this.active;
+    })();
+    return this.pausing;
+  }
+  protected async suspendMotion(): Promise<void> { this.bot.pathfinder.setGoal(null); }
+  async resumeAfterUpkeep(): Promise<void> {
+    if (!this.active || !this.paused) return;
+    const target = resolvePlayerTarget(this.bot, this.target);
+    if (!target.ok || target.entity !== this.targetEntity) {
+      this.finish({ level: 'warning', message: target.ok ? 'Target changed while yielding.' : target.error }); return;
+    }
+    this.paused = false; this.pausing = null; this.lastProgressAt = Date.now();
+    this.beginning = Promise.resolve().then(() => { if (this.active && !this.paused) return this.begin(target.entity); });
+    await this.beginning;
+  }
+
   protected async endMotion(): Promise<void> {
     this.bot.pathfinder.setGoal(null);
   }
@@ -95,6 +126,7 @@ export abstract class TrackedPlayerTask {
   private readonly onDeath = (): void => { this.finish({ level: 'info', message: 'Bot died. Player task stopped.' }); };
   private readonly onEnd = (): void => { this.finish({ level: 'info', message: 'Bot disconnected. Player task stopped.' }); };
   private readonly onPathUpdate = (path: { status: string }): void => {
+    if (this.paused) return;
     if (path.status === 'noPath' || path.status === 'timeout') {
       this.finish({ level: 'warning', message: `Cannot reach "${this.target}" within the pathfinding budget (${path.status}). Task stopped.` });
     }
@@ -111,6 +143,7 @@ export abstract class TrackedPlayerTask {
       this.finish({ level: 'warning', message: 'Target entity changed. Start a new task for the current player entity.' });
       return;
     }
+    if (this.paused) return;
     const position = this.bot.entity.position;
     const previous = this.lastPosition;
     const moved = previous && Math.hypot(position.x - previous.x, position.y - previous.y, position.z - previous.z) >= 0.5;
@@ -132,6 +165,7 @@ export abstract class TrackedPlayerTask {
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.running = false;
+    this.cancellation.abort();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.bot.removeListener('playerLeft', this.onPlayerLeft);
@@ -145,6 +179,7 @@ export abstract class TrackedPlayerTask {
       try {
         // Finish pending plugin startup before cleanup; it must not restart motion later.
         await this.beginning.catch(() => undefined);
+        await this.pausing?.catch(() => undefined);
         await this.endMotion();
       } finally {
         this.bot.pathfinder.setGoal(null);

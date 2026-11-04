@@ -1,82 +1,39 @@
-# Equipment module follow-up
+# Shared equipment coordination
 
-Status: documented future work; **do not implement automatic equipping as part of the initial Protect overhaul**. Updated 2026-11-04. The initial placeholder is implemented in `backend/src/tasks/protect/equipment.ts`. Protect receives only the interface and read-only placeholder below. See [PROTECT_DESIGN.md](PROTECT_DESIGN.md).
+Status: **implemented foundation**, 2026-11-04. This supersedes the original read-only-equipment-only scope of Protect. Supporting coordination was approved with [Bot Upkeep](BOT_UPKEEP_DESIGN.md); a universal equipment optimizer remains future work.
 
-## 1. Current gaps
+## Responsibilities and API
 
-Protect now reads only the held weapon, replacing Guard's startup/collection selector. Attack retains a separate selector; excavation uses the tool plugin; armor is managed through another plugin and manual drop controls. These paths have no common inventory-operation coordinator. The old Guard selector did not reliably react to breakage/replacement and selection ignores enchantments, combat timing, and durability.
+`backend/src/runtime/equipment.ts` contains the per-captured-bot `EquipmentService`, `EquipmentIntent`, `EquipmentOwner`, and `EquipmentUnavailable` result. It imports no gameplay task, transport, UI, or role module. BotSession composes it with tasks/upkeep/manual armor controls.
 
-Existing armor update/drop defects are tracked as KI-006/KI-007; asynchronous tool cancellation as KI-002 in [KNOWN_ISSUES.md](KNOWN_ISSUES.md). This document records their relationship to equipment work without authorizing those fixes now.
+- `exclusive(work)` serializes inventory mutation until each promise actually settles. Failure does not abandon pending work or poison later queue entries.
+- `EquipmentIntent.publish(requirement)` increments its revision. Requirements are unrestricted, empty, specific item, or best under a named registered policy and optional block position.
+- `restore(owner, signal)` enters the lane; `reconcile(owner, fallback, signal)` is used while already holding it. Resolve current inventory, equip, read back, compare revision after awaits, and replan at most three times. A missing item blocks readiness rather than silently substituting food/bare hands.
+- `registerPolicy(id, resolver)` adds a pure selection policy without editing Auto-eat. Duplicate identifiers are rejected. Future tasks implement the owner/yield contract and publish their own requirement.
+- `armor(owner, signal)` runs under the same lane, considers only four armor destinations, excludes held/reserved source items and protected manual slots, awaits equip and verifies destination identity.
 
-## 2. Stable interface and initial placeholder
+EquipmentOwner identity and cancellation belong to the current in-process execution. Item references and policies are not wire payloads or durable records. Task permissions and scheduling are independent.
 
-Conceptual contract; choose final names during implementation:
+## Current selection policies
 
-```text
-EquipmentPort
-  prepare(context, cancellationSignal) -> readiness result
-  subscribeReadiness(listener) -> unsubscribe
-  release(taskGeneration) -> completion
+| Policy | Delivered ranking | Limits |
+| --- | --- | --- |
+| `melee` | Usable sword/axe; material tier wooden/golden/stone/iron/diamond/netherite, sword preference, small Sharpness weight, stable slot order | Explicit heuristic, not universal DPS, enchantment or custom-server combat optimization |
+| `mining` | Current block's `digTime(item.type, ..., item.enchants, bot.entity.effects)`, usable durability and stable slot order | Preserves excavation's non-harvest-required scope; does not obtain missing tools or guarantee loot |
+| Armor | Usable helmet/chestplate/leggings/boots; material tier leather/golden/chainmail/iron/diamond/netherite, Protection weight | No situational enchantment, Elytra/offhand or custom-armor optimization; only strictly better scored replacements |
 
-EquipmentContext
-  taskGeneration, purpose (melee protection initially)
-  optional target traits for future selection
+Item comparison uses type, metadata, NBT and components, with current reference preferred. Original slot is only a tie preference. Identical copies are interchangeable. An empty-hand requirement switches to a checked empty hotbar slot and fails if none exists; it never uses a drop-capable hand unequip fallback. [Mineflayer equip implementation](https://github.com/PrismarineJS/mineflayer/blob/master/lib/plugins/simple_inventory.js), [Prismarine Item fields](https://github.com/PrismarineJS/prismarine-item/blob/master/index.d.ts)
 
-Readiness
-  ready | unavailable | failed
-  reasonCode, equipmentRevision
-```
+## Integration and readiness
 
-The interface describes needed readiness, not a particular inventory slot or ranking algorithm. The caller can wait/cancel without knowing how selection works. Readiness is a snapshot, not a guarantee that a weapon cannot break on the next hit.
+Attack and Protect prepare best supported melee gear at startup and after meals. Excavation publishes the current block, obtains its tool through the service, and rechecks after each await/checkpoint. Follow is unrestricted. Auto-eat temporarily acquires the hand only after the current owner confirms a safe point, then reconciles the **current** intent before resume, including on a failed/canceled meal. There is no food-specific task-name switch. See the [handoff diagram and lifecycle](BOT_UPKEEP_DESIGN.md).
 
-The initial placeholder reads the held item and reports ready for a supported sword/axe; otherwise unavailable with `AUTOMATIC_EQUIPPING_DEFERRED`. It may listen for held-item changes to publish readiness. It performs **no inventory writes**, no ranking, no periodic best-weapon scans, no purchases/crafting, and no implicit calls to old selectors. Preparation/release resolve promptly and cancellation is harmless. Replacing it with the real module should not require rewriting Protect's state machine.
+The Protect read-only port in `backend/src/tasks/protect/equipment.ts` remains its immediate held-weapon readiness observer: weapon loss interrupts fighting and degrades to escort. It is not a second automatic writer. Continuous weapon upgrades/breakage replacement outside startup/food reconciliation are not implemented. Standalone task constructors retain an optional legacy test path; BotSession always injects the shared service.
 
-Read-only readiness handling is part of the placeholder, not an implementation of automatic selection. Protect handles unavailable readiness by escorting without melee and reporting degraded protection. Players/operators must arrange the held weapon using existing/manual means. Other legacy equipment paths remain unchanged until separately migrated.
+Runtime no longer loads `mineflayer-armor-manager`'s autonomous entry point. Auto-armor's toggle is therefore authoritative for all automatic armor writes. The package remains installed. Manual armor removal/drop is serialized, matches metadata/components instead of type alone, and protects the slot until Auto-armor is disabled/re-enabled or connection replacement.
 
-### Release and teardown contract
+## Follow-ups and verification limits
 
-Each consumer owns its readiness unsubscribe handle and task generation. Unsubscribe prevents further delivery immediately; `release(taskGeneration)` is idempotent and must invalidate pending preparation callbacks before resolving. The placeholder removes its own `heldItemChanged` handler if acquired, clears consumer references, and performs no inventory writes or inventory restoration. Partial preparation and repeated release use the same disposer path.
+Future work: version-aware situational weapon/armor ranking, debounced inventory/held-item dirty observation for proactive loadout maintenance, standardized task outcomes, and broader own-armor projection coverage (KI-003/KI-006). None requires coupling food policy to task implementation. New inventory writers/container tasks must join this lane and declare safe handoffs; TypeScript interfaces alone cannot police arbitrary plugin writes.
 
-The future real module must additionally cancel its reconciliation/debounce/retry timers, remove its own inventory listeners, drain/cancel its serialized operation, discard stale selected-item/slot references, and release resource ownership only after no late mutation can affect a successor. An operation deadline alone is not proof that a server-side equip was canceled. Preserve unrelated consumers and plugin/core listeners; never use global listener removal. Shared observation stops only after its final consumer releases it. Full Protect teardown ordering and plugin failure handling are specified in [PROTECT_DESIGN.md](PROTECT_DESIGN.md#32-full-teardown-sequence).
-
-### Auto-eat integration
-
-Idle Auto-eat is separately authorized and implemented through the library adapter described in [IDLE_BEHAVIORS.md](IDLE_BEHAVIORS.md). It temporarily equips food and awaits restoration, with a cleanup gate before tasks or self-defense acquire execution. This does not add weapon ranking or implement the deferred equipment coordinator. Protect's equipment port remains read-only; legacy passive armor/Attack/mining paths still need explicit migration.
-
-The proposed [Bot Upkeep design](BOT_UPKEEP_DESIGN.md) limits upkeep features to Auto-eat and Auto-armor and keeps Idle Behaviors separate. It defines a generic ExecutionContext item requirement for every task, including future tasks, and an EquipmentService that re-resolves and verifies that current requirement after every meal attempt before hand-dependent task work resumes. This covers best tools, specific items, empty hands and unrestricted hands; food code never branches on task names. Existing eating/armor libraries require this coordination layer and controlled executors. The proposal does not implement or authorize the deferred equipment module.
-
-## 3. Planned real equipment implementation
-
-### Observation
-
-Listen to inventory `updateSlot` and `heldItemChanged`, with collection only as an additional hint. Debounce/coalesce bursts and mark the loadout dirty. Add a slow reconciliation check, initially about three seconds, while a consumer needs equipment. Re-evaluate immediately after a held weapon disappears. Own and remove subscriptions/timers with the consumer lifecycle. [Mineflayer API](https://github.com/PrismarineJS/mineflayer/blob/master/docs/api.md)
-
-### Selection policy
-
-Separate a pure selector from the inventory executor. Compare supported weapons using tested version-aware damage/attack timing, applicable enchantments, remaining durability, and a stable tie-breaker. Avoid replacing a nearly equivalent usable weapon repeatedly. Preserve a reasonable fallback when no preferred weapon exists; bare-handed combat requires an explicit caller policy rather than an accidental fallback.
-
-Use `durabilityUsed` and `enchants` through supported item APIs, with version-correct maximum durability/attributes when available. Do not read fixed NBT paths that differ across item component versions. Unknown custom-server effects remain unknown; do not advertise an exact universal DPS optimizer. [Prismarine Item API](https://github.com/PrismarineJS/prismarine-item#api)
-
-### Serialized inventory operations
-
-- One in-flight equipment mutation per bot; no overlapping equip/unequip/drop/tool operations on the same resources.
-- Revalidate slot, item identity, and equipment/task generation immediately before each mutation. Use item metadata/identity, not type-only matching.
-- Check cancellation after every await. A canceled equip completion must never restart motion/combat or act on a new bot instance.
-- Compare the currently held item's identity before equipping; a slot-update event caused by our equip must not create a feedback loop.
-- Bound retries/timeouts. Confirm resulting inventory state before reporting success, and return structured failure/degraded readiness when uncertain.
-- Treat a selected weapon becoming invalid or breaking as new state, not a reason to retry the same stale item indefinitely.
-
-### Shared resource ownership
-
-Coordinate weapon selection, mining tool selection, armor automation, and explicit dashboard inventory changes through a small per-bot coordinator. Define which operations wait, reject, or supersede pending preparation. Plugin-owned automatic writes cannot be assumed to honor an application lock; inspect/configure/migrate those paths explicitly before claiming exclusive ownership.
-
-Do not build a general distributed inventory service. Resource control stays beside the Mineflayer runtime. Persist configuration later if required, not live Item objects or in-flight promises. RBAC determines whether a user may request the parent action; equipment selection does not interpret player roles.
-
-## 4. Rollout after separate approval
-
-1. Implement/test the selector and serialized executor behind EquipmentPort, initially for Protect melee weapons.
-2. Test breakage, slot movement, same-type items with different metadata, rapid inventory events, cancellation/disconnect, and concurrent requests.
-3. Integrate standalone Attack, excavation tools, armor observations/automation, and manual drops in explicit slices. Preserve existing public behaviors or document approved changes.
-4. Fix related inventory defects with dedicated regression cases. Keep the read-only placeholder available for testing unsupported/degraded configurations.
-
-Release criteria include no duplicate/redundant equips, no post-cancellation side effects, bounded failure recovery, and readiness events matching actual inventory. Real-server/version checks supplement mocked state. Until this work is separately approved and completed, Protect's first release must continue to describe automatic equipment handling as deferred.
+Tests cover revision changes, missing/better gear, generic policies and specific/empty requirements, compatible Follow movement, cancellation and delayed plugin operations. Live server/version checks are still needed for packet timing, inventory semantics and combat behavior. Do not advertise universal best-tool optimization or fully extracted BotSession responsibilities. [Known issues](KNOWN_ISSUES.md)

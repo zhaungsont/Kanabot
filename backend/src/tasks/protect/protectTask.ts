@@ -9,11 +9,16 @@ import { HeldWeaponEquipment, type EquipmentPort } from './equipment.js';
 import { ProtectCombatAdapter } from './combatAdapter.js';
 import { ThreatObserver } from './threatObserver.js';
 import { distanceSquared, reason, selectThreat } from './threatSelector.js';
+import { EquipmentIntent, EquipmentUnavailable, type EquipmentOwner, type EquipmentService } from '../../runtime/equipment.js';
 
 const { goals } = pathfinderPackage;
 let nextGeneration = 0;
 /** One movement owner, one serialized decision operation, independent of viewers and RBAC. */
-export class ProtectTask {
+export class ProtectTask implements EquipmentOwner {
+  readonly equipmentIntent = new EquipmentIntent();
+  private paused = false;
+  private pausing: Promise<boolean> | null = null;
+  get active(): boolean { return !!this.player && !this.abort.signal.aborted; }
   private readonly abort = new AbortController();
   private readonly observer: ThreatObserver;
   private readonly disposers: (() => void)[] = [];
@@ -47,8 +52,10 @@ export class ProtectTask {
     private readonly onFinished: (outcome: PlayerTaskOutcome) => void,
     private readonly onStatus: (status: ProtectStatus) => void,
     private readonly equipment: EquipmentPort = new HeldWeaponEquipment(bot),
-    private readonly now: () => number = () => performance.now()) {
+    private readonly now: () => number = () => performance.now(),
+    private readonly equipmentService?: EquipmentService) {
     this.observer = new ThreatObserver(bot);
+    this.equipmentIntent.publish({ kind: 'best', policy: 'melee' });
   }
 
   start(): Promise<void> {
@@ -76,11 +83,16 @@ export class ProtectTask {
     this.listen('end', this.end);
     this.listen('path_update', this.pathUpdate);
     this.disposers.push(this.equipment.subscribeReadiness(() => {
+      if (this.paused) return;
       if (this.equipment.readiness() !== 'ready') this.invalidateCombat();
       this.request();
     }));
     this.publish();
     await this.equipment.prepare({ generation: this.generation, purpose: 'melee-protection' }, this.abort.signal);
+    if (this.equipmentService && !this.abort.signal.aborted) {
+      try { await this.equipmentService.restore(this, this.abort.signal); }
+      catch (error) { if (!(error instanceof EquipmentUnavailable)) throw error; }
+    }
     if (this.abort.signal.aborted) return;
     this.progressAt = this.now();
     this.interval = setInterval(() => this.request(), 333);
@@ -116,11 +128,12 @@ export class ProtectTask {
   private readonly death = (): void => { this.fail('Bot died.'); };
   private readonly end = (): void => { this.ended = true; this.combat?.markEnded(); this.fail('Bot disconnected.'); };
   private readonly pathUpdate = (path: { status: string }): void => {
+    if (this.paused) return;
     if (path.status === 'noPath' || path.status === 'timeout') { this.pathFailed = true; this.request(); }
   };
 
   private request(): void {
-    if (this.abort.signal.aborted) return;
+    if (this.abort.signal.aborted || this.paused) return;
     this.pending = true;
     if (this.busy || this.urgent) return;
     this.urgent = setTimeout(() => {
@@ -135,7 +148,7 @@ export class ProtectTask {
     }, Math.max(0, 100 - (this.now() - this.lastScan)));
   }
   private async evaluate(): Promise<void> {
-    if (this.abort.signal.aborted || !this.player) return;
+    if (this.abort.signal.aborted || this.paused || !this.player) return;
     this.lastScan = this.now();
     const player = resolvePlayerTarget(this.bot, this.target);
     if (!player.ok || player.entity !== this.player || this.bot.game.dimension !== this.dimension) {
@@ -165,7 +178,7 @@ export class ProtectTask {
       await this.escort(returning ? 'returning' : 'escorting');
     } else if (choice.entity !== this.selected || this.phase !== 'engaging' || this.bot.pvp.target !== choice.entity) {
       await this.combat!.stop();
-      if (this.abort.signal.aborted) return;
+      if (this.abort.signal.aborted || this.paused) return;
       if (!this.revalidatePlayer()) return;
       // Positions, world identity and equipment may change during graceful shutdown.
       if (!this.observer.eligible(choice.entity) || this.equipment.readiness() !== 'ready' ||
@@ -183,7 +196,7 @@ export class ProtectTask {
   private async escort(phase: 'escorting' | 'returning'): Promise<void> {
     const change = this.phase !== phase || !!this.selected;
     await this.combat!.stop();
-    if (this.abort.signal.aborted) return;
+    if (this.abort.signal.aborted || this.paused) return;
     if (!this.revalidatePlayer()) return;
     this.selected = null; this.selectionReason = '';
     if (change) {
@@ -193,6 +206,27 @@ export class ProtectTask {
     }
   }
   private resetProgress(): void { this.progressAt = this.now(); this.progressDistance = Infinity; }
+  pauseForUpkeep(_signal: AbortSignal): Promise<boolean> {
+    if (this.pausing) return this.pausing;
+    if (!this.active) return Promise.resolve(false);
+    this.paused = true;
+    this.pausing = (async () => {
+      await this.operation;
+      if (!this.active) return false;
+      if (!this.bot.pvp.target) this.bot.pathfinder.setGoal(null);
+      await this.combat?.stop();
+      if (!this.active) return false;
+      this.bot.pathfinder.setGoal(null);
+      this.publish('Temporarily yielding equipment to upkeep; Protect remains active.');
+      return true;
+    })();
+    return this.pausing;
+  }
+  async resumeAfterUpkeep(): Promise<void> {
+    if (!this.active || !this.paused) return;
+    this.paused = false; this.pausing = null; this.selected = null; this.phase = 'preparing';
+    this.pathFailed = false; this.resetProgress(); this.request();
+  }
   private revalidatePlayer(): boolean {
     const player = resolvePlayerTarget(this.bot, this.target);
     if (!player.ok || player.entity !== this.player || this.bot.game.dimension !== this.dimension) {
@@ -236,6 +270,7 @@ export class ProtectTask {
     }, 10_000);
     this.stopping = (async () => {
       await this.operation;
+      await this.pausing?.catch(() => undefined);
       try { await this.combat?.release(); } catch (error) { errors.push(error); }
       try { await this.equipment.release(this.generation); } catch (error) { errors.push(error); }
       if (!this.ended) {

@@ -66,5 +66,10 @@ export function registerSessionHandlers(socket: AppSocket, manager: BotManager):
     if (!session) return reply(callback, { ok: false, code: 'FORBIDDEN', error: 'Attach to this bot before changing behaviors.' });
     reply(callback, session.updateBehaviors(settings));
   });
+  socket.on('bot:upkeep:update', (id, settings, callback) => {
+    const session = manager.getSessionForViewer(socket.id, id);
+    if (!session) return reply(callback, { ok: false, code: 'FORBIDDEN', error: 'Attach to this bot before changing upkeep.' });
+    reply(callback, session.updateUpkeep(settings));
+  });
   socket.on('disconnect', () => manager.detachViewer(socket.id));
 }

@@ -8,6 +8,14 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Bot Upkeep implementation — 2026-11-04
+
+- Split Idle Behaviors (Fight/Flight, bounded Avoid drowning, Sleep TODO) from opt-in Bot Upkeep (Auto-eat/Auto-armor during or outside tasks), with separate authorized controls/status and event logging.
+- Added a shared serialized equipment executor, revisioned generic task item intents, cooperative yields and verified post-meal restoration for Follow, Attack, Protect and excavation. Food policy contains no task-name branches; missing required gear blocks/resumes through bounded readiness retries.
+- Replaced runtime armor-plugin automation with toggle-controlled four-slot selection; compatible movement continues and manual removals protect their slots until Auto-armor is disabled/re-enabled or connection replacement.
+- Hardened combat look draining, pending cleanup gates and final-block excavation cancellation/terminal cleanup. Manual armor drops compare item metadata/components rather than type alone.
+- Added simulated lifecycle, inventory, task-handoff and settings regression coverage; updated architecture, feature docs and diagrams. Real-server/version and load validation remain outstanding.
+
 ### Bot Upkeep proposal — 2026-11-04
 
 - Revised the API/source-backed proposal around disjoint, coexisting Idle Behaviors and Bot Upkeep. Upkeep includes only Auto-eat/Auto-armor; Fight/Flight and planned Avoid drowning are idle-only, with Sleep marked TODO.

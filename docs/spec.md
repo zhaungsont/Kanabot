@@ -169,8 +169,8 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 - mineflayer for Minecraft bot
 - mineflayer-pathfinder for bot movement
 - mineflayer-pvp for combat (Protect and Attack)
-- mineflayer-armor-manager for automatic armor equipping
-- mineflayer-tool for automatic optimal tool selection (excavate ability)
+- Shared EquipmentService for opt-in armor upkeep; armor-manager remains installed but is not loaded
+- Shared mining resolver using current block digTime for excavation; tool plugin remains available for legacy direct-test compatibility
 
 ### 4.2 Socket.IO Events
 
@@ -179,6 +179,8 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 | Event | Payload | Description |
 |---|---|---|
 | `bot:create` | `BotConfig, BotSessionHandle, callback(SessionResult<BotSessionSnapshot>)` | Idempotently create and attach to a bot; same handle does not spawn twice |
+| `bot:upkeep:update` | `sessionId, UpkeepSettings, callback(SessionResult<UpkeepSettings>)` — authorized food/armor settings |
+| `bot:behaviors:update` | `sessionId, BehaviorSettings, callback(SessionResult<BehaviorSettings>)` — authorized idle settings |
 | `bot:resume` | `BotSessionHandle, callback(SessionResult<BotSessionSnapshot>)` | Authorize a new viewer and return current state, armor, and bounded history |
 | `bot:disconnect` | `sessionId, callback(SessionResult<null>)` | Explicitly stop and retire the attached bot for all viewers |
 | `bot:chat` | `sessionId: string, message: string` | Send chat to game |
@@ -247,7 +249,7 @@ Transitions:
 - Confirmed damage sources outrank proximity; missing sources remain unknown. Sustained approach and clear visibility inform deterministic priority tiers. Retain targets for one second unless a higher tier appears; same-tier switches require a target at least 25% closer.
 - Acquire within 10 blocks, retain within 16. Escort within 3. Return when bot/player separation exceeds 12; resume engagement within 5. Failed mob paths enter five-second cooldown. Failed escort paths terminate. Thirty seconds without approach/damage progress rejects a mob or terminates an unsuccessful return.
 - A wall suppresses clear-line priority but does not prove a walking route is impossible. Only the chosen target gets a bounded pursuit. PvP still supplies low-level combat; this is not a guarantee of wall-aware melee, explosion evasion, or projectile defense.
-- Held sword/axe readiness is read-only. No weapon means escort only; weapon loss interrupts combat; a usable held weapon allows recovery. Automatic equipping is separately deferred in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md). Other inventory paths are unchanged.
+- Protect prepares supported melee gear through EquipmentService at startup and after meals. Its held-item readiness observer remains read-only: loss interrupts melee and degrades to escort. Continuous weapon optimization is deferred. See [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md).
 - Session state includes optional `protect: ProtectStatus` (phase, player, selected threat/reason, closest distance, readiness, detail). Publish material state/target changes, not scan-by-scan positions. Dashboard loss and role changes do not terminate it.
 - If Protect stops because it cannot reach its player, the existing event warning is accompanied by one private `/tell`, mirrored as private in the dashboard. No public-chat fallback is sent.
 - Stop invalidates queued work and drains startup/combat before clearing goals/restoring settings. New tasks remain blocked until teardown settles. A ten-second cleanup deadline reports trouble without releasing ownership; unconfirmed cleanup requires deployment retirement.
@@ -255,21 +257,22 @@ Transitions:
 
 See [PROTECT_DESIGN.md](PROTECT_DESIGN.md) for prioritization diagrams, API details, and teardown ownership. Future player defense is covered by Protect invocation authority without another RBAC check, but is not enabled initially.
 
-#### Automatic idle behaviors
+#### Idle Behaviors and Bot Upkeep
 
-The dashboard provides Auto-eat and Self-defense toggles, plus Fight/Flight and Response duration (1–120 whole seconds, default 10). Both default off. These are backend-owned session preferences exposed in optional `BotSessionInfo.behaviors` and changed through deployment-authorized `bot:behaviors:update(sessionId, settings, callback)`. Settings survive dashboard refresh/Minecraft reconnect within the same session, not retirement/backend restart. All viewers receive authoritative state updates.
+Two separate backend-owned modules and dashboard panels:
 
-Auto-eat uses pinned `mineflayer-auto-eat` 5.0.3 through a cancellation/cleanup adapter, initialized after plugin injection, only while idle and not self-defending. Status explains waiting/full hunger/missing food/task pauses; ordinary food cannot be consumed to heal when hunger is full. Behavior settings, starts, completion/cancellation, failures, and defense target loss are recorded in the event log. Self-defense starts from identified self-damage, including a known player attacker, without gameplay RBAC. Repeated hits do not extend the response. Fight uses the held sword/axe and falls back to flight when unavailable. Flight uses a bounded inverse follow goal. Unknown sources cause no guessed retaliation. No unrelated players are selected by proximity.
+- **Idle Behaviors:** Self-defense (Fight/Flight, fixed Response duration of 1–120 whole seconds, default 10), bounded Avoid drowning, and disabled Sleep **TODO**. All toggles default off. A task yielding to food stays active and cannot enable idle reactions.
+- **Bot Upkeep:** Auto-eat and Auto-armor, both default off, eligible during or outside current tasks with resource coordination. No additional upkeep features are included.
 
-Tasks and manual inventory actions cannot overlap these owned operations. A task request interrupts the behavior and returns a retry message while cleanup drains; it is not silently queued. At the response deadline the bot returns to idle; failed path searches suppress navigation for the remainder of that response. Disabling/changing active settings, death/world change and retirement cancel owned work. Cleanup failure remains visible and blocks new tasks. Full design and installed-library compatibility hooks: [IDLE_BEHAVIORS.md](IDLE_BEHAVIORS.md).
+Deployment-authorized `bot:behaviors:update(sessionId, BehaviorSettings, callback)` and `bot:upkeep:update(sessionId, UpkeepSettings, callback)` return validated settings. Optional `BotSessionInfo.behaviors`/`.upkeep` expose separate statuses. Settings survive viewer refresh and Minecraft reconnect in the same session, not retirement/backend restart. Legacy behavior requests containing `autoEat` forward it to Upkeep; Idle never schedules food. Automatic actions have no requester/gameplay RBAC check.
 
-#### Armor Manager
+Auto-eat uses pinned `mineflayer-auto-eat` 5.0.3 with autonomous mode disabled and owned cancellation/listeners. Assessment is once per second with attempt backoff: eat when hunger is at most 15, or health below 14 with hunger below 20. Ordinary food cannot heal through eating at full hunger. Food waits for the active owner's safe-point acknowledgement, then consumes under the shared inventory lane and restores/verifies its **current revisioned item requirement** before resuming hand-dependent work. Follow briefly pauses; Attack/Protect drain combat/look continuations; excavation yields between safe steps and refreshes the current block. Failure/cancellation also reconciles. Missing required gear suspends the task and retries readiness after backoff; unresolved cleanup blocks conflicting starts rather than force-releasing ownership.
 
-- Plugin: `mineflayer-armor-manager`
-- Loaded on bot creation via `bot.loadPlugin(armorManager)`
-- `bot.armorManager.equipAll()` is called once on the `spawn` event
-- Automatically equips the best available armor from inventory into helmet, chestplate, leggings, and boots slots
-- No manual intervention required; runs passively whenever the bot's inventory changes
+Auto-armor uses four-slot material/Protection heuristics through EquipmentService and never clears compatible movement goals or takes held/task-reserved source items. The autonomous armor-manager plugin is no longer loaded. Manual removal/drop uses the same lane and protects the slot until Auto-armor is disabled/re-enabled or connection replacement. Open container windows defer new upkeep. Settings, starts, outcomes, upgrades and material failures enter the event log.
+
+Self-defense responds only to an identified tracked attacker, including a player; repeated hits do not extend its response. Fight requires a usable held sword/axe, otherwise flight. Unknown sources never cause guessed retaliation. Avoid drowning inspects at most eight loaded blocks directly above for air, uses bounded non-destructive pathfinding, and stops after ten seconds/recovered oxygen/failure/cancellation. It cannot rescue an active task. Sleep is not implemented.
+
+Task/manual requests cancel and return a retry explanation during cleanup; they are not silently queued. Disable/Stop/death/world changes/retirement cancel owned work. Exact listeners/timers/settings are removed/restored; operation timeouts do not prove cleanup. Details and compatibility limits: [Bot Upkeep](BOT_UPKEEP_DESIGN.md), [Idle Behaviors](IDLE_BEHAVIORS.md), [Equipment](EQUIPMENT_DESIGN.md).
 
 #### Excavate
 

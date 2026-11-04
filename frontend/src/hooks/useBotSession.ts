@@ -6,6 +6,7 @@ import { createSessionHandle, SessionHandleStore } from '../services/sessionHand
 import type { BotSessionInfo, BotSessionHandle, BotSessionSnapshot, SessionResult, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion, ArmorSlot, ArmorSlotId } from '../types';
 import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/socketContracts.js';
 import type { BehaviorSettings } from '../../../shared/behaviorContracts.js';
+import type { UpkeepSettings } from '../../../shared/upkeepContracts.js';
 
 const BACKEND_URL = import.meta.env['VITE_BACKEND_URL'] ?? 'http://localhost:3001';
 const handleStore = new SessionHandleStore(() => window.localStorage, BACKEND_URL);
@@ -167,6 +168,16 @@ export function useBotSession() {
       });
     });
   }, []);
+  const updateUpkeep = useCallback((settings: UpkeepSettings): Promise<SessionResult<UpkeepSettings>> => {
+    const socket = socketRef.current, saved = handleRef.current;
+    if (!socket?.connected || !saved) return Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: 'Reconnect to configure upkeep.' });
+    return new Promise(resolve => {
+      socket.timeout(5_000).emit('bot:upkeep:update', saved.sessionId, settings, (error: Error | null, result?: SessionResult<UpkeepSettings>) => {
+        if (socketRef.current !== socket || handleRef.current?.sessionId !== saved.sessionId || error || !result) resolve({ ok: false, code: 'UNAVAILABLE', error: 'Settings were not acknowledged. Reconnect to check.' });
+        else resolve(result);
+      });
+    });
+  }, []);
   const playerList = usePlayerList({
     socket: connected && !isRestoring ? socketRef.current : null,
     sessionId: handle?.sessionId ?? null,
@@ -176,6 +187,6 @@ export function useBotSession() {
   return {
     playerRoles, playerList, connected, sessionId: handle?.sessionId ?? null, hasSavedSession: !!handle,
     botInfo, chatMessages, eventLog, deployError, isDeploying, isRestoring, armorItems,
-    deployBot, resumeBot, disconnectBot, sendChat, performAction, excavate, unequipArmor, updateBehaviors,
+    deployBot, resumeBot, disconnectBot, sendChat, performAction, excavate, unequipArmor, updateBehaviors, updateUpkeep,
   };
 }

@@ -1,37 +1,28 @@
 # Automatic idle behaviors
 
-Status: implemented local runtime, 2026-11-04. Settings and execution belong to the backend BotSession; no browser connection is needed after configuration. This adds optional idle behaviors without changing Protect's navigation failure policy or the task scheduler.
+Status: implemented local runtime, 2026-11-04. Settings and execution belong to backend BotSession and continue without a browser. [Bot Upkeep](BOT_UPKEEP_DESIGN.md) separately owns **Auto-eat and Auto-armor**, including during tasks. Idle Behaviors owns only Fight/Flight, Avoid drowning, and Sleep (TODO).
 
-**Target ownership (proposal):** Idle Behaviors and [Bot Upkeep](BOT_UPKEEP_DESIGN.md) will coexist with disjoint features. Idle Behaviors keeps Fight/Flight and gains planned Avoid drowning; Sleep is **TODO**, with no detailed scope yet. Auto-eat moves entirely to Upkeep alongside Auto-armor, with eligibility during or outside tasks. The sections below describe the currently implemented, pre-migration runtime; no feature has moved merely because this design was updated. A foreground task yielding to upkeep remains active and cannot enable idle behaviors.
+## Controls and boundaries
 
-## Controls and scope
+The dashboard's **Idle Behaviors** panel has Self-defense, Fight/Flight, Response duration (1–120 whole seconds, default 10), and Avoid drowning. All toggles default off. Sleep is visibly disabled and marked **TODO**; no sleep logic is implemented.
 
-Both options default off. The dashboard's **Automatic behaviors** panel offers Auto-eat and Self-defense, with Fight/Flight selection and a **Response duration** of 1–120 whole seconds (default 10). Settings survive dashboard refresh and Minecraft reconnect/respawn in the same session. Retirement/backend restart discards them. Concurrent viewer edits use last accepted write, with authoritative state broadcast to all viewers.
+Settings survive viewer refresh and Minecraft reconnect/respawn in the same session, not retirement/backend restart. Attached deployment authorization is required for `bot:behaviors:update`; automatic execution has no requester or gameplay RBAC check. Role changes do not affect running reactions. Concurrent viewer edits use the last accepted write, broadcast authoritatively.
 
-Only an authenticated attached deployment viewer can change settings via `bot:behaviors:update`. Automatic execution has no requester and never calls gameplay RBAC. It cannot be enabled or configured through Minecraft chat. Player-role edits do not affect it.
+`IdleBehaviors` observes self damage and oxygen, owns one operation/cancellation/status timer, and composes `SelfDefenseReaction` or `SurfaceReaction`. These modules own exact listeners, motion, settings and teardown. Shared `behaviorContracts.d.ts` is presentation data; UI components contain no game execution policy. Food code and its adapter are composed by Upkeep only.
 
-## Runtime boundaries and ownership
+Eligibility requires state idle, no foreground task (including a task suspended for food), no task cleanup, manual inventory action or active upkeep operation. Idle glances also yield to these owners. A new task or manual action requests cancellation and receives a retry explanation until cleanup actually settles; nothing is silently queued. Stop interrupts idle work. The existing ten-minute idle retirement still applies; automation does not renew it.
 
-- `backend/src/behaviors/settings.ts`: defaults, copies and runtime validation.
-- `IdleBehaviors`: one per Minecraft connection; observes self damage and schedules idle eating, owns cancellation and published status.
-- `SelfDefenseReaction`: bounded combat/flight response, owned pathfinding settings/listeners/timers.
-- `AutoEatAdapter`: installed library integration, consumption cancellation/listener cleanup and awaited item restoration.
-- `backend/src/runtime/combatAdapter.ts`: exclusive scoped PvP compatibility lease, shared with Protect. The old Protect import re-exports the same class.
-- `shared/behaviorContracts.d.ts`: JSON configuration/status; UI components only render it and submit settings.
+Idle status is `idle`, `surfacing`, `defending`, `stopping` or `cleanup-failed`, separate from foreground task and upkeep statuses. An already-running Fight/Flight response exposes an `EquipmentOwner`: food can pause/drain it, restore its current requirement and resume from fresh state while the original response deadline continues. No new idle reaction starts during a food transaction.
 
-Eligibility requires session state idle, no current task, no task cleanup, and no manual inventory operation. Idle glances pause while a behavior owns execution. Behaviors never interrupt an active Follow, Protect, Attack or excavation task. A new task request interrupts an idle behavior; because command acceptance remains synchronous, it is rejected with a retry message until asynchronous cleanup settles. No task is silently queued. Stop also interrupts idle behavior. Manual armor actions use the same cleanup gate.
+## Avoid drowning
 
-Behavior activity is separate from `currentTask`: idle/eating/defending/stopping/cleanup-failed. It does not change gameplay task permissions. Existing ten-minute idle retirement still applies; automation does not renew it. General coordination of legacy automatic armor, Attack and mining equipment is still deferred.
+Once per second while eligible, oxygen at most six triggers a bounded attempt to reach air. Inspect already-loaded blocks directly above, at most eight blocks; require air at both feet and head, and stop at unknown data or a solid obstruction. No digging, towers, scaffolding or parkour. Install one GoalBlock with a 1.5-second search budget, 10 ms tick budget and search radius 12. End when oxygen recovers to at least 12, path search fails, ten seconds elapse, or cancellation arrives; back off five seconds between attempts.
 
-## Auto-eat
+This is a limited idle escape, not a general drowning rescue/path planner. Caves without observed air above may require manual intervention. It never steals movement from a task, including a yielded task, and refuses food handoff until its own escape ends. Armor may run alongside it. Teardown clears its exact interval/deadline/path/abort observers and restores saved movements/search settings even after startup failure.
 
-Uses the user-requested `mineflayer-auto-eat` **5.0.3**, pinned because its adapter has version-specific compatibility hooks. The plugin selects and equips food and performs consumption. Kanabot schedules its public `eat()` method rather than enabling an unrestricted physics-tick loop: initialize the adapter lazily after Mineflayer injects the plugin, then check once per second while idle, with a five-second pause after an attempt. Eat at or below 15 hunger, or below 14 health when hunger is not full. Full hunger does not allow ordinary food consumption; healing then depends on server regeneration rules or special items. The status distinguishes plugin initialization, missing hunger data, full hunger, missing food/registry and task pauses. Missing or failing food-availability data is contained by the controller and cannot escape its reconciliation timer. Retain the plugin's banned-food policy. No food is created or acquired automatically. Missing-food/eating failures log at most once per 30 seconds. Starts, completion/cancellation, setting changes, self-defense transitions and target loss are also recorded with appropriate event-log severity. Failed meals never emit a success event.
+## Auto-eat migration
 
-Auto-eat pauses during tasks and self-defense. An identified attack cancels/drains eating before starting defense; time spent draining counts toward the response duration. The adapter disables upstream's fire-and-forget old-item restoration and awaits its own restoration when the original held item is still present. It does not select better weapons or implement the deferred equipment overhaul.
-
-### Installed-library compatibility
-
-Inspection of installed 5.0.3 found that its consumption timeout leaves listeners installed, cancellation may occur before its consumption wait exists, equip failure may leave `isEating` true, and default item restoration is not awaited. The adapter replaces the plugin instance's internal `buildEatingListener` wait with a scoped abortable wait, resets the internal eating flag only after the owned operation settles, and awaits restoration. The package files are unchanged. These private hooks are explicit upgrade dependencies; tests exercise the installed `EatUtil`, including timeout, early cancellation, equip failure and delayed restoration. Review this adapter when upgrading. [Upstream source](https://github.com/linkle69/mineflayer-auto-eat/blob/master/src/new.ts)
+Auto-eat is no longer an idle feature. Its only scheduler is `backend/src/upkeep/upkeep.ts`, and its library adapter is `backend/src/behaviors/autoEat.ts` (the existing path is retained). Legacy behavior requests containing `autoEat` are forwarded to Upkeep at the session boundary and stripped from idle settings. See [Bot Upkeep](BOT_UPKEEP_DESIGN.md) for thresholds, post-meal guarantees, library hooks, and failure handling.
 
 ## Self-defense
 
@@ -48,9 +39,9 @@ Reconcile every 333 ms without overlapping operations or queued scan backlogs. U
 
 Turning a feature off, changing active response settings, Stop, task preemption, bot death, dimension/game changes and disconnect abort owned work. Remove task-owned listeners and intervals by their exact references. Dispose connection observers on replacement/retirement; old callbacks use the captured bot and cannot act on a new connection.
 
-Drain any in-flight food equip/consume/restoration or combat startup before releasing resources. Finish the scoped combat stop, clear the owned pathfinder goal, restore saved movements/search budgets/PvP methods, clear target references and remove abort subscriptions. Response deadlines and consumption timers are canceled. Do not globally remove listeners or treat a timeout as cancellation.
+Drain combat startup and any active upkeep handoff before releasing resources. Food operations belong exclusively to Upkeep. Finish the scoped combat stop, clear the owned pathfinder goal, restore saved movements/search budgets/PvP methods, clear target references and remove abort subscriptions. Response deadlines and owned observation timers are canceled. Do not globally remove listeners or treat a timeout as cancellation.
 
-A delayed meal reports cleanup trouble after ten seconds; a response reports it if still unresolved ten seconds beyond its configured duration. A task remains blocked while the operation is pending. Confirmed cleanup failure stays visible and blocks conflicting work until deployment retirement; delayed but eventually successful cleanup may release the gate. Controller disposal prevents new starts even if old cleanup completes later.
+A response reports cleanup trouble if still unresolved ten seconds beyond its configured duration. Upkeep owns its separate 15-second handoff deadline. A task remains blocked while the operation is pending. Confirmed cleanup failure stays visible and blocks conflicting work until deployment retirement; delayed but eventually successful cleanup may release the gate. Controller disposal prevents new starts even if old cleanup completes later.
 
 ## Protect reachability notification
 

@@ -5,6 +5,7 @@ import type { Movements, Pathfinder } from 'mineflayer-pathfinder';
 import { ScopedCombatAdapter } from '../runtime/combatAdapter.js';
 import { HeldWeaponEquipment } from '../tasks/protect/equipment.js';
 import { distanceSquared } from '../tasks/protect/threatSelector.js';
+import { EquipmentIntent, type EquipmentOwner } from '../runtime/equipment.js';
 
 const { goals } = pathfinderPackage;
 export function trackedAttacker(bot: Bot, entity: Entity | undefined): entity is Entity {
@@ -15,7 +16,22 @@ export function trackedAttacker(bot: Bot, entity: Entity | undefined): entity is
 }
 
 /** One bounded automatic reaction. Never authorizes or submits gameplay tasks. */
-export class SelfDefenseReaction {
+export class SelfDefenseReaction implements EquipmentOwner {
+  readonly equipmentIntent = new EquipmentIntent();
+  private paused = false;
+  get active(): boolean { return !this.abort.signal.aborted; }
+  async pauseForUpkeep(_signal: AbortSignal): Promise<boolean> {
+    this.paused = true; await this.operation;
+    if (!this.active) return false;
+    if (!this.bot.pvp.target) this.bot.pathfinder.setGoal(null);
+    await this.combat.stop();
+    if (!this.active) return false;
+    this.bot.pathfinder.setGoal(null); return true;
+  }
+  async resumeAfterUpkeep(): Promise<void> {
+    if (!this.active) return;
+    this.paused = false; this.selected = null; this.motion = null; this.tick();
+  }
   private readonly abort = new AbortController();
   private readonly saved;
   private readonly movements: Movements;
@@ -62,6 +78,7 @@ export class SelfDefenseReaction {
     }
   };
   private readonly weaponChanged = (): void => {
+    if (this.paused) return;
     if (this.motion === 'fight' && this.equipment.readiness() !== 'ready') {
       try { this.combat.invalidate(); } catch (error) { this.onDetail(`Self-defense safety stop failed: ${String(error)}`); this.finish(); }
     }
@@ -75,7 +92,7 @@ export class SelfDefenseReaction {
     }
   };
   private tick(): void {
-    if (this.abort.signal.aborted) return;
+    if (this.abort.signal.aborted || this.paused) return;
     // Previous reconciliation must settle; timers never queue a backlog.
     if (this.busy) return;
     this.busy = true;
@@ -85,7 +102,7 @@ export class SelfDefenseReaction {
   }
   private busy = false;
   private async reconcile(): Promise<void> {
-    if (this.abort.signal.aborted) return;
+    if (this.abort.signal.aborted || this.paused) return;
     if (this.bot.game.dimension !== this.dimension) { this.finish(); return; }
     if (this.blocked) {
       if (this.selected) {
@@ -117,10 +134,11 @@ export class SelfDefenseReaction {
     let motion: 'fight' | 'flight' = canFight ? 'fight' : 'flight';
     if (this.selected === target && this.motion === motion && (motion === 'flight' || this.bot.pvp.target === target)) return;
     await this.combat.stop();
-    if (this.abort.signal.aborted || this.invalid.has(target) || !trackedAttacker(this.bot, target)) return;
+    if (this.abort.signal.aborted || this.paused || this.invalid.has(target) || !trackedAttacker(this.bot, target)) return;
     if (this.bot.game.dimension !== this.dimension) { this.finish(); return; }
     if (this.equipment.readiness() !== 'ready' || player?.gamemode === 1 || player?.gamemode === 3) motion = 'flight';
     this.selected = target; this.motion = motion;
+    this.equipmentIntent.publish(motion === 'fight' ? { kind: 'best', policy: 'melee' } : { kind: 'unrestricted' });
     this.onDetail(motion === 'fight' ? `Fighting ${target.username ?? target.name ?? 'attacker'}.` :
       this.mode === 'fight' ? 'Fleeing: no usable held weapon or attacker is invulnerable.' : `Fleeing from ${target.username ?? target.name ?? 'attacker'}.`);
     if (motion === 'fight') await this.combat.attack(target, this.abort.signal);

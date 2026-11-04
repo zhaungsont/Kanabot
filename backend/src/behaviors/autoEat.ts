@@ -4,7 +4,7 @@ import type { Item } from 'prismarine-item';
 /** Compatibility boundary for mineflayer-auto-eat 5.0.3's listener/cancellation defects. */
 export class AutoEatAdapter {
   private signal: AbortSignal | null = null;
-  constructor(private readonly bot: Bot) {
+  constructor(private readonly bot: Bot, private readonly restorePrevious = true) {
     bot.autoEat.disableAuto(); // Our scheduler owns cadence and inventory ownership.
     bot.autoEat.setOpts({ returnToLastItem: false, strictErrors: true, eatingTimeout: 3_000 });
     // Upstream's timeout does not remove its listeners. Replace only this instance's
@@ -31,7 +31,7 @@ export class AutoEatAdapter {
       (this.bot.autoEat as unknown as { _eating: boolean })._eating = false;
       this.bot.deactivateItem();
       // Await restoration ourselves: upstream's default restoration is fire-and-forget.
-      if (previous && this.bot.inventory.items().includes(previous) && this.bot.heldItem !== previous) await this.bot.equip(previous, 'hand');
+      if (this.restorePrevious && previous && this.bot.inventory.items().includes(previous) && this.bot.heldItem !== previous) await this.bot.equip(previous, 'hand');
     }
   }
   private waitForConsumption(item: Item, timeout: number): Promise<void> {

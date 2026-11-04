@@ -23,18 +23,18 @@ Being eligible under Protect is distinct from being permitted by RBAC to start i
 | `ThreatObserver` | Build small observations from Mineflayer entities/events; track recent damage evidence |
 | `ThreatSelector` | Pure candidate filtering/ranking and target retention decisions |
 | `ProtectCombatAdapter` | Tested PvP start/stop/handoff behavior; scoped movement settings |
-| Equipment interface + placeholder | Read held-weapon readiness, expose future preparation boundary; no automatic equipment writes |
+| Equipment readiness + shared preparation | Read held-weapon readiness; use EquipmentService at startup/post-meal and the generic upkeep handoff contract |
 
 Use ordinary TypeScript modules in the bot runtime, not services or a generic plugin framework. No React/Socket.IO imports belong here. The command service authorizes task creation; observation and combat remain local and independent of dashboard visibility.
 
-Reuse target/lifecycle helpers from `TrackedPlayerTask` where appropriate, but not its behavior unchanged: a path failure while chasing one mob should normally reject that mob and return to escorting, whereas losing the protected player may terminate Protect. Do not instantiate the existing `AttackTask` internally: it assumes a player target, owns its own task lifecycle, and performs weapon equipping outside the agreed placeholder scope.
+Reuse target/lifecycle helpers from `TrackedPlayerTask` where appropriate, but not its behavior unchanged: a path failure while chasing one mob should normally reject that mob and return to escorting, whereas losing the protected player may terminate Protect. Do not instantiate the existing `AttackTask` internally: it assumes a player target, owns its own task lifecycle, and owns its own weapon preparation and player targeting.
 
 ## 3. State machine and movement ownership
 
 ```mermaid
 stateDiagram-v2
     [*] --> Preparing
-    Preparing --> Escorting: Target validated, placeholder equipment read
+    Preparing --> Escorting: Target validated, shared equipment prepared
     Escorting --> Engaging: Eligible reachable threat and weapon ready
     Engaging --> Escorting: Threat resolved, player nearby
     Engaging --> Returning: Escort leash exceeded or weapon unavailable
@@ -76,9 +76,9 @@ Entity death/gone may arrive more than once or overlap Stop/disconnect. Cleanup 
 
 1. Mark the task stopping and increment/invalidate its generation **before awaiting anything**. Abort its signal, prevent new evaluations/transitions, and reject pending requests to acquire its resources.
 2. Cancel scheduled decision/reconciliation intervals, urgent reevaluation/debounce callbacks, retry/backoff timers, progress-watchdog timers, target-commit timers if implemented, and task-owned operation deadlines. Drop queued transition intents. In-flight callbacks still verify the generation before any side effect.
-3. Detach task-owned observation listeners using their original function references: `entityHurt`, `entityDead`, `entityGone`, `entityMoved` (and spawn/update events only if used), `playerLeft`, `game`, `death`, `end`, and placeholder `heldItemChanged`. Also remove task-owned world/chunk/block listeners if the observation adapter subscribes to them. Do not remove Mineflayer's core listeners or another feature's listeners.
+3. Detach task-owned observation listeners using their original function references: `entityHurt`, `entityDead`, `entityGone`, `entityMoved` (and spawn/update events only if used), `playerLeft`, `game`, `death`, `end`, and readiness `heldItemChanged`. Also remove task-owned world/chunk/block listeners if the observation adapter subscribes to them. Do not remove Mineflayer's core listeners or another feature's listeners.
 4. Drain the serialized transition/startup operation while its aborted state prevents new attacks or goals. Finish the combat adapter's scoped stop operation on the captured bot. Keep the adapter's scoped completion listeners/deadlines alive until that operation settles; do not clear the mechanism needed to finish cleanup in step 2. Only then clear the task's pathfinder goal and any task-owned movement controls. `clearControlStates()` is permitted only while Protect exclusively owns those controls. On an already-ended bot, skip unsupported calls and still finish local disposal.
-5. Call the equipment port's unsubscribe and `release(taskGeneration)`. The placeholder performs no inventory cleanup or writes. A future real module must drain/cancel its own owned operation before confirming release; an already-sent server action may complete and must not trigger follow-up combat after cancellation.
+5. Call the read-only equipment port's unsubscribe and `release(taskGeneration)`. Drain captured-bot startup/preparation and any upkeep handoff before releasing conflicting ownership. An already-sent server action may complete but must not trigger follow-up combat after cancellation. See the shared equipment/upkeep lifecycle for inventory reconciliation.
 6. Remove adapter-specific PvP/pathfinder listeners (`startedAttacking`, `stoppedAttacking`, `attackedTarget`, `path_update`, `path_reset`, and transient `path_stop` listeners where actually acquired). Remove only owned listeners, after their pending operations settle. Observe the installed plugin's cleanup limitations described below.
 7. Restore all settings changed by Protect on the same owned bot: pathfinder movements and search/time budgets; PvP movements, follow/view/attack ranges, and timing policy **only if changed**. Maintain an explicit snapshot of changed settings. Restoring settings or clearing goals must never touch a newer bot instance or controller.
 8. Clear task-local references and collections: protected/selected entities, evidence history, unreachable exclusions, position samples, shortlist/visibility results, pending intents, progress timestamps, dirty/degraded-status flags, equipment subscription, and disposer registry. Preserve bounded externally published audit/history; do not erase shared roster caches or role assignments.
@@ -99,7 +99,7 @@ The implementation lives under `backend/src/tasks/protect/`. `BotSession` suppli
 
 `ProtectCombatAdapter` leases the installed PvP instance's `stop`, movement policy, and `hasShield` hook. All internal PvP stop calls (including entity loss and attack handoffs) use its scoped stop method. It registers `path_stop` before requesting `pathfinder.stop()`, then finalizes a stopped path using public `forceStop()`. If no completion arrives within 1.5 seconds, emergency `forceStop()` clears the owned goal. This fallback can interrupt a jump. The original PvP stop method is never entered during this lease, so its five-second timer and broad listener removal cannot run late. The adapter drains outstanding stop/start work before restoring the exact methods/settings; unrelated `path_stop` listeners remain installed. This is an instance-scoped compatibility shim, not a dependency patch. Compatibility tests exercise installed PvP 1.3.2 methods; rerun/review them on plugin upgrades.
 
-The scoped `hasShield` hook returns false to disable this plugin version's fixed-index creeper logic and delayed shield writes. Protect therefore promises no shield or explosion tactics. This private hook is an explicit compatibility dependency. Other PvP reach/range/timing settings remain unchanged. Automatic equipping remains unimplemented.
+The scoped `hasShield` hook returns false to disable this plugin version's fixed-index creeper logic and delayed shield writes. Protect therefore promises no shield or explosion tactics. This private hook is an explicit compatibility dependency. Other PvP reach/range/timing settings remain unchanged. Shared startup/post-meal equipment preparation is implemented; continuous loadout optimization remains deferred.
 
 Progress timeout is 30 seconds: escorting within three blocks is healthy; combat requires measurable approach or actual hurt events on the selected mob. Mere proximity across a wall does not reset the watchdog. A stalled mob enters five-second exclusion; an unsuccessful escort/return terminates. A ten-second teardown deadline publishes cleanup trouble without releasing the session's lease; delayed operations remain tracked, and failed cleanup blocks successors until deployment retirement. Explicit stop and automatic safety stop each publish one terminal outcome after successful cleanup.
 
@@ -243,17 +243,13 @@ While Returning or equipment-unavailable, the observer may continue measuring th
 
 Creeper urgency does not mean sprinting into an explosion. Use fuse/attack metadata only when version-named semantics have been verified; no fixed protocol indices. If an immediate hazard cannot be handled under the initial melee policy, report degraded protection and preserve escort constraints. Full explosion evasion, ranged weapons, shielding tactics, and projectile interception are not initial guarantees. Do not rely on the plugin's historical shield behavior as proof of explosion safety.
 
-## 7. Equipment placeholder for the first implementation
+## 7. Equipment readiness and upkeep handoffs
 
-The actual automatic equipment overhaul is deferred. Implement only the interface described in [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md) and a read-only placeholder:
+The shared [equipment foundation](EQUIPMENT_DESIGN.md) now prepares supported melee gear at startup and after food. The read-only held-weapon port remains Protect's immediate readiness observer: no usable held sword/axe means escort-only behavior; loss/breakage interrupts engagement, and a later usable held weapon permits reevaluation. Continuous automatic weapon upgrades or situational ranking outside these preparation boundaries remain follow-ups.
 
-- It reports readiness if a supported sword/axe is already held; otherwise reports unavailable. It never scans for a better item, selects a slot, or equips/unequips/drops anything.
-- Protect escorts while equipment is unavailable, does not begin melee engagement, and emits a rate-limited degraded-status explanation.
-- On held-item loss/breakage, stop engagement through the normal serialized handoff and resume escorting. If a usable held weapon appears later, reevaluation can engage again.
-- Do not carry the old guard's `equipBestWeapon()`/collection listener into Protect, or reuse AttackTask's auto-equip. This would implement the deferred module through another path.
-- Existing spawn-time armor management, standalone Attack equipment behavior, and excavation tool selection remain unchanged and are not claimed to be coordinated by the placeholder.
+Protect implements the generic EquipmentOwner contract with a revisioned best-melee requirement. During a meal it retains its task slot and observers, pauses decisions/progress watchdogs, drains serialized transitions and scoped combat/pending looks, then clears motion. Upkeep reconciles the current requirement through the shared inventory lane with readback. Resume clears stale selection/path failures, resets progress and recomputes threats from current state. A missing post-meal weapon leaves the task suspended with visible blocked upkeep status and readiness retries; it never restarts fighting with food. Normal weapon loss outside a food handoff retains escort degradation.
 
-Manual/current equipment is therefore required for combat in this first version. This temporary limitation must be visible in task status and release notes. It is preferable to claiming the future module works or attacking bare-handed without a deliberate policy.
+Food policy does not import Protect. Armor runs through the same inventory executor without resetting compatible movement. Startup/collection writes from the autonomous armor plugin have been replaced. Exact handoff/failure/teardown rules and selection limitations are in [BOT_UPKEEP_DESIGN.md](BOT_UPKEEP_DESIGN.md).
 
 ## 8. Performance and observability
 
@@ -271,7 +267,7 @@ Prototype and test combat handoff, equipment-loss handling, and cleanup against 
 
 ## 10. Implementation and acceptance
 
-The implemented scope includes rename/aliases, RBAC mapping migration, ProtectTask and state machine, threat observations/scoring, leash/recovery, combat adapter, the read-only equipment placeholder, structured state, and tests. It excludes the real equipment module and player-threat selection.
+The implemented scope includes rename/aliases, RBAC mapping migration, ProtectTask and state machine, threat observations/scoring, leash/recovery, combat adapter, held readiness, structured state, and tests. Shared equipment preparation and upkeep handoffs have subsequently been added; player-threat selection remains excluded.
 
 Acceptance scenarios:
 
@@ -282,7 +278,7 @@ Acceptance scenarios:
 - The bot returns when the player outruns it and cannot chase indefinitely outside the leash.
 - A known aggressor outranks a merely closer mob; unknown damage sources are not fabricated; target hysteresis prevents near-tie thrashing.
 - Unreachable targets cool down without repeated expensive searches; return failures and missing chunks have bounded outcomes.
-- The placeholder performs zero inventory writes. Losing the held weapon ends melee engagement; holding a suitable weapon later restores readiness without restarting Protect.
+- The held-readiness observer performs zero inventory writes; shared preparation uses the EquipmentService lane. Losing the held weapon ends melee engagement; holding a suitable weapon later restores readiness without restarting Protect.
 - All player entities remain excluded from initial target selection, regardless of role or damage events. Future player-candidate policy tests can be added without changing authorization or task scheduling.
 - Dashboard disconnection and role edits leave an already-running Protect task intact. All owned listeners/timers/settings are cleaned up on termination.
 - Verify 3D/squared-distance examples, exact radius boundaries, same-distance ties, an aggressor farther than the closest mob, stale/reused entity IDs, and unknown chunks on ray paths. Confirm no chunk loads occur and expensive checks respect the shortlist cap.

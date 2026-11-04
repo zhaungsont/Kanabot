@@ -23,12 +23,9 @@ export default function BehaviorPanel({ status, connected, onUpdate }: Props) {
     finally { setPending(false); }
   };
   const disabled = !connected || pending;
-  return <section className="behavior-panel" aria-label="Automatic behaviors">
-    <h2>Automatic behaviors</h2>
-    <p>Run while idle. Settings stay with this bot when you leave the dashboard.</p>
-    <label className="behavior-toggle"><input type="checkbox" checked={settings.autoEat} disabled={disabled}
-      onChange={event => void save({ ...settings, autoEat: event.target.checked })} />Auto-eat</label>
-    <p>Eat food from inventory when hungry. Paused during tasks and self-defense.</p>
+  return <section className="behavior-panel" aria-label="Idle behaviors">
+    <h2>Idle Behaviors</h2>
+    <p>Only run when no gameplay task is active. A task yielding to Upkeep stays active.</p>
     <label className="behavior-toggle"><input type="checkbox" checked={settings.selfDefense.enabled} disabled={disabled}
       onChange={event => void save({ ...settings, selfDefense: { ...settings.selfDefense, enabled: event.target.checked } })} />Self-defense</label>
     <form onSubmit={event => {
@@ -43,6 +40,10 @@ export default function BehaviorPanel({ status, connected, onUpdate }: Props) {
       <button disabled={disabled || !Number.isInteger(Number(duration)) || Number(duration) < 1 || Number(duration) > 120}>Apply response settings</button>
     </form>
     <p>Reacts to an identified attacker, including players. Fight needs a held sword/axe; otherwise the bot flees. Repeated hits do not extend the response.</p>
+    <label className="behavior-toggle"><input type="checkbox" checked={settings.avoidDrowning ?? false} disabled={disabled}
+      onChange={event => void save({ ...settings, avoidDrowning: event.target.checked })} />Avoid drowning</label>
+    <p>When idle and oxygen is low, try a bounded route to nearby air above. Cannot rescue the bot during a task.</p>
+    <label className="behavior-toggle"><input type="checkbox" disabled />Sleep — TODO</label>
     <p role="status"><strong>{status.activity === 'idle' ? 'Waiting' : status.activity}:</strong> {status.detail}</p>
     {notice && <p role="status">{notice}</p>}
   </section>;

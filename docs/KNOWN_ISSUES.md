@@ -16,21 +16,19 @@ The lifecycle change now requires an authorized attached viewer for every dashbo
 
 ## KI-002 — Excavation cancellation can dig after Stop and retain a stale task
 
-**Open · High · Confirmed with a deterministic mock**
+**Resolved · 2026-11-04 · Bot Upkeep prerequisite**
 
-In `backend/src/tasks/excavateTask.ts`, pause `equipForBlock()` on the final block, call `abort()`, then resolve equipment selection. Execution can still call `dig()`. The loop then exits without calling either `onAbort` or `onComplete`. `BotSession.activeExcavateTask` remains set: the public state is idle, but the next task is rejected as still stopping.
-
-Suggested fix: cancellation checks after every asynchronous boundary, active digging cancellation, and guaranteed terminal cleanup in `finally`. Regression coverage must exercise cancellation during navigation, equipment selection, and digging, including the final block. This bug was deliberately not fixed in the dashboard-lifecycle change.
+Excavation now checks cancellation after every asynchronous boundary, requests active digging/navigation cancellation, and guarantees one terminal callback in `finally`. Its session cleanup gate stays held until that callback, including on the final block. It also owns death/end/dimension-change observers and removes them on teardown. Regression cases pause final navigation, equipment and digging, issue Stop and resolve late; no new dig starts, exactly one abort is delivered and the task retires. Live server timing still requires validation.
 
 ## KI-003 — BotSession combines too many responsibilities
 
-**Open · Medium · Architecture**
+**Partially addressed · Medium · Architecture**
 
-`backend/src/botSession.ts` still manages connection/retry state, armor, telemetry, and task orchestration. Protect has been extracted into independent runtime modules with serialized lifecycle and a read-only equipment port. Follow/attack share `TrackedPlayerTask`; excavation still uses separate callbacks. Other equipment/armor paths can overlap and are not governed by a common coordinator.
+`backend/src/botSession.ts` still manages connection/retry state, armor, telemetry, and task orchestration. Protect has been extracted into independent runtime modules with serialized lifecycle and a read-only equipment port. Follow/attack share `TrackedPlayerTask`; excavation still uses separate callbacks. Shared EquipmentService, cooperative task yields, Bot Upkeep and idle reactions now own equipment coordination; task lifecycle/projection/session responsibilities are still not fully extracted.
 
 Follow-up: extract remaining equipment/armor capabilities, standardize asynchronous task lifecycle/cancellation, and retain a small task coordinator with explicit resource ownership. Keep Mineflayer dependencies inside runtime modules; a wrapper around every library call is unnecessary.
 
-Protect extraction is implemented; [Protect design](PROTECT_DESIGN.md) records its runtime and compatibility constraints. The [equipment follow-up](EQUIPMENT_DESIGN.md), including automatic selection and migration of other inventory paths, remains deferred. Protect tests use the installed PvP implementation with simulated bots; real-server combat/version validation and many-bot load measurements remain outstanding.
+Protect extraction is implemented; [Protect design](PROTECT_DESIGN.md) records its runtime and compatibility constraints. The [equipment foundation](EQUIPMENT_DESIGN.md) now serializes current task/upkeep/manual mutations. Continuous weapon maintenance, richer ranking, projection extraction and uniform task outcomes remain follow-ups. Protect tests use the installed PvP implementation with simulated bots; real-server combat/version validation and many-bot load measurements remain outstanding.
 
 ## KI-004 — Frontend client behavior remains embedded in React hooks
 
@@ -50,19 +48,17 @@ Suggested fix: shared runtime schemas, structured errors and task events, comman
 
 ## KI-006 — Own armor updates may remain stale
 
-**Open · Medium · Previously reproduced with a mock**
+**Partially addressed · Medium · Previously reproduced with a mock**
 
-The armor projection listens to `entityEquip` in `backend/src/botSession.ts`; changes to the bot's own equipment can arrive through inventory slot updates instead. The dashboard may retain old armor until another explicit refresh.
+The armor projection listens to `entityEquip` in `backend/src/botSession.ts`; changes to the bot's own equipment can arrive through inventory slot updates instead. New Upkeep armor upgrades and manual operations explicitly refresh the projection, but arbitrary server-driven breakage/removal may still leave old armor until another refresh. The general slot observer remains deferred.
 
 Suggested fix: observe the relevant inventory slot changes through an armor module, coalesce updates, and test automatic equips as well as manual drops.
 
 ## KI-007 — Armor drop can select the wrong copy
 
-**Open · Medium · Previously reproduced with a mock**
+**Resolved for distinct copies · 2026-11-04**
 
-After unequipping, `unequipAndDropArmor()` locates an inventory item by item type alone. With multiple copies, it can toss a spare with different enchantments, durability, or metadata.
-
-Suggested fix: track the unequipped item's identity/metadata and resulting slot, coordinate inventory operations, and test two same-type items with different properties.
+Manual removal/drop enters the shared captured-bot inventory lane and matches type, metadata, NBT and components instead of type alone. A regression with a same-type spare carrying different NBT verifies the equipped copy is selected. Identical copies remain interchangeable; there is no persistent Item identity guarantee. A manual removal protects its armor slot from Auto-armor until the toggle is disabled/re-enabled or a new connection is created.
 
 ## KI-008 — Local lifecycle foundation is not durable cloud ownership
 

@@ -100,6 +100,7 @@ test('session blocks every new task until pending attack startup and cleanup com
   raw.pvp.attack = async (entity) => {
     await new Promise<void>((resolve) => { release = resolve; });
     calls.attacks.push(entity);
+    bot.pvp.target = entity as never;
   };
   assert.deepEqual(session.performPlayerCommand({ type: 'attack', target: 'Alex' }), { ok: true });
   await flush();

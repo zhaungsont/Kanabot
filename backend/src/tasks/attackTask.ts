@@ -1,30 +1,22 @@
 import type { Entity } from 'prismarine-entity';
-import type { Movements } from 'mineflayer-pathfinder';
 import { TrackedPlayerTask } from './trackedPlayerTask.js';
+import { ScopedCombatAdapter } from '../runtime/combatAdapter.js';
 
-/** A single explicit PvP target, canceled on loss/death/unreachable path or Stop. */
+/** Explicit player combat with a generic equipment intent and cooperative item-use yield. */
 export class AttackTask extends TrackedPlayerTask {
-  private previousPvpMovements: Movements | undefined;
-  private configured = false;
-
+  private combat: ScopedCombatAdapter | null = null;
   protected async begin(entity: Entity): Promise<void> {
-    this.previousPvpMovements = this.bot.pvp.movements;
-    this.configured = true;
-    this.bot.pvp.movements = this.movements ?? undefined;
-    const tiers = ['wooden', 'golden', 'stone', 'iron', 'diamond', 'netherite'];
-    const weapon = this.bot.inventory.items()
-      .filter((item) => /_(sword|axe)$/.test(item.name))
-      .sort((a, b) => tiers.indexOf(b.name.split('_')[0]) - tiers.indexOf(a.name.split('_')[0]))[0];
-    if (weapon) await this.bot.equip(weapon, 'hand');
-    if (this.running) await this.bot.pvp.attack(entity);
-  }
-
-  protected async endMotion(): Promise<void> {
-    if (!this.configured) return;
-    try {
-      await this.bot.pvp.stop();
-    } finally {
-      this.bot.pvp.movements = this.previousPvpMovements;
+    this.equipmentIntent.publish({ kind: 'best', policy: 'melee' });
+    if (!this.combat) this.combat = new ScopedCombatAdapter(this.bot, this.movements!);
+    if (this.equipmentService) await this.equipmentService.restore(this, this.cancellation.signal);
+    else {
+      const tiers = ['wooden', 'golden', 'stone', 'iron', 'diamond', 'netherite'];
+      const weapon = this.bot.inventory.items().filter(i => /_(sword|axe)$/.test(i.name))
+        .sort((a, b) => tiers.indexOf(b.name.split('_')[0]) - tiers.indexOf(a.name.split('_')[0]))[0];
+      if (weapon) await this.bot.equip(weapon, 'hand');
     }
+    if (this.active && !this.paused) await this.combat.attack(entity, this.cancellation.signal);
   }
+  protected async suspendMotion(): Promise<void> { await this.combat?.stop(); this.bot.pathfinder.setGoal(null); }
+  protected async endMotion(): Promise<void> { await this.combat?.release(); }
 }

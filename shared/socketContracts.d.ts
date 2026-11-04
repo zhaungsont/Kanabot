@@ -3,6 +3,7 @@ import type { PlayerCommand, PlayerCommandResult, PlayerListSnapshot } from './p
 import type { BotSessionHandle, BotSessionSnapshot, SessionResult } from './sessionContracts.js';
 import type { PlayerAccessSnapshot, PlayerAccessResult, PlayerRoleUpdate } from './accessContracts.js';
 import type { BehaviorSettings } from './behaviorContracts.js';
+import type { UpkeepSettings } from './upkeepContracts.js';
 
 export interface ServerToClientEvents {
   'bot:access': (snapshot: PlayerAccessSnapshot) => void;
@@ -16,6 +17,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  'bot:upkeep:update': (sessionId: string, settings: UpkeepSettings, callback: (result: SessionResult<UpkeepSettings>) => void) => void;
   'bot:behaviors:update': (sessionId: string, settings: BehaviorSettings, callback: (result: SessionResult<BehaviorSettings>) => void) => void;
   'bot:access:get': (sessionId: string, callback: (result: PlayerAccessResult) => void) => void;
   'bot:access:update': (sessionId: string, update: PlayerRoleUpdate, callback: (result: PlayerAccessResult) => void) => void;

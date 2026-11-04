@@ -42,7 +42,7 @@ test('flight only triggers while idle with an identified attacker; repeated hits
   const timer = clock(t); const { bot, attacker, calls } = fixture(); let idle = false;
   const settings = defaultBehaviors(); settings.selfDefense.enabled = true;
   const statuses: BehaviorStatus[] = [];
-  const runtime = new IdleBehaviors(bot, settings, () => idle, s => statuses.push(s), () => {}, null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => idle, s => statuses.push(s), () => {}, timer.now);
   t.after(() => runtime.dispose());
   bot.emit('entityHurt', bot.entity, attacker); await flush(); assert.equal(calls.goals.length, 0);
   idle = true; bot.emit('entityHurt', bot.entity, undefined as never); await flush(); assert.equal(calls.goals.length, 0);
@@ -57,7 +57,7 @@ test('fight uses held weapon and identified player attacker without role checks,
   const timer = clock(t); const { bot, alex } = fixture();
   const settings = defaultBehaviors(); settings.selfDefense = { enabled: true, mode: 'fight', durationSeconds: 10 };
   const saved = bot.pathfinder.movements; const stop = bot.pvp.stop;
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, timer.now);
   t.after(() => runtime.dispose());
   bot.emit('entityHurt', bot.entity, alex.entity); await flush(); await flush(); assert.equal(bot.pvp.target, alex.entity);
   Object.assign(bot, { heldItem: null }); bot.emit('heldItemChanged', null);
@@ -70,7 +70,7 @@ test('fight uses held weapon and identified player attacker without role checks,
 test('flight requests additional separation even when a ranged attacker is already more than twelve blocks away', async t => {
   const timer = clock(t); const { bot, attacker, calls } = fixture(); attacker.position.x = 25;
   const settings = defaultBehaviors(); settings.selfDefense.enabled = true;
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, timer.now);
   t.after(() => runtime.dispose()); bot.emit('entityHurt', bot.entity, attacker); await flush(); await flush();
   const goal = calls.goals.at(-1) as { isEnd(node: { x: number; y: number; z: number }): boolean };
   assert.equal(goal.isEnd(bot.entity.position), false);
@@ -79,7 +79,7 @@ test('flight requests additional separation even when a ranged attacker is alrea
 test('dead attackers are retired; nearby hostile mobs may be selected during the same bounded response', async t => {
   const timer = clock(t); const { bot, attacker } = fixture();
   const settings = defaultBehaviors(); settings.selfDefense = { enabled: true, mode: 'fight', durationSeconds: 10 };
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, timer.now);
   t.after(() => runtime.dispose());
   bot.emit('entityHurt', bot.entity, attacker); await flush(); await flush(); assert.equal(bot.pvp.target, attacker);
   bot.emit('entityDead', attacker); await timer.advance(333); assert.equal(bot.pvp.target, undefined);
@@ -89,30 +89,7 @@ test('dead attackers are retired; nearby hostile mobs may be selected during the
   await timer.advance(10_000); assert.equal(runtime.busy, false);
 });
 
-test('auto-eat serializes work, pauses for tasks and settings-off, and drains before defense starts', async t => {
-  const timer = clock(t); const { bot, attacker } = fixture();
-  let idle = false, meals = 0, release!: () => void;
-  const settings = defaultBehaviors(); settings.autoEat = true; settings.selfDefense.enabled = true;
-  const eating = { eat: async (_signal: AbortSignal) => { meals++; await new Promise<void>(resolve => { release = resolve; }); } };
-  const runtime = new IdleBehaviors(bot, settings, () => idle, () => {}, () => {}, eating, timer.now);
-  t.after(() => runtime.dispose());
-  await timer.advance(1_000); assert.equal(meals, 0);
-  idle = true; await timer.advance(1_000); assert.equal(meals, 1);
-  await timer.advance(1_000); assert.equal(meals, 1);
-  bot.emit('entityHurt', bot.entity, attacker); await flush(); assert.equal(bot.pvp.target, undefined);
-  release(); await flush(); await flush(); assert.equal(runtime.busy, true);
-  runtime.update(defaultBehaviors()); await flush(); await flush(); assert.equal(runtime.busy, false);
-  await timer.advance(10_000); assert.equal(meals, 1);
-});
 
-test('task preemption blocks successors until an in-flight meal settles; disposal prevents late restarts', async t => {
-  const timer = clock(t); const { bot } = fixture(); let release!: () => void; let meals = 0;
-  const settings = defaultBehaviors(); settings.autoEat = true;
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, { eat: async () => { meals++; await new Promise<void>(resolve => { release = resolve; }); } }, timer.now);
-  await timer.advance(1_000); assert.equal(runtime.prepareForTask(), false); assert.equal(runtime.busy, true);
-  runtime.dispose(); release(); await flush(); await timer.advance(30_000);
-  assert.equal(meals, 1); assert.equal(bot.listenerCount('entityHurt'), 0); assert.equal(bot.listenerCount('death'), 0);
-});
 
 function foodFixture() {
   const { bot } = fixture();
@@ -185,7 +162,7 @@ test('session task requests preempt idle defense and cannot overlap its cleanup;
 test('unreachable self-defense waits out its original response rather than starting a search on every hit', async t => {
   const timer = clock(t); const { bot, attacker, calls } = fixture();
   const settings = defaultBehaviors(); settings.selfDefense.enabled = true;
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, timer.now);
   t.after(() => runtime.dispose());
   bot.emit('entityHurt', bot.entity, attacker); await flush(); await flush();
   bot.emit('path_update', { status: 'noPath' } as never); await timer.advance(333);
@@ -195,18 +172,6 @@ test('unreachable self-defense waits out its original response rather than start
   await timer.advance(5_000); assert.equal(runtime.busy, false);
 });
 
-test('pending eating cleanup reports a deadline and keeps ownership until the operation actually settles', async t => {
-  const timer = clock(t); const { bot } = fixture(); let release!: () => void;
-  const settings = defaultBehaviors(); settings.autoEat = true;
-  const statuses: BehaviorStatus[] = [];
-  const runtime = new IdleBehaviors(bot, settings, () => true, s => statuses.push(s), () => {},
-    { eat: async () => { await new Promise<void>(resolve => { release = resolve; }); } }, timer.now);
-  t.after(() => runtime.dispose());
-  await timer.advance(1_000); runtime.prepareForTask(); await timer.advance(10_000);
-  assert.equal(statuses.at(-1)?.activity, 'cleanup-failed'); assert.equal(runtime.prepareForTask(), false);
-  assert.equal(statuses.at(-1)?.activity, 'cleanup-failed');
-  release(); await flush(); await flush(); assert.equal(runtime.busy, false);
-});
 
 test('installed auto-eat awaits old-item restoration and a failed equip does not poison future meals', async () => {
   const { bot } = foodFixture(); const adapter = new AutoEatAdapter(bot); let release!: () => void; let done = false;
@@ -228,46 +193,21 @@ test('behavior updates require an attached viewer and remain session-scoped acro
   registerSessionHandlers(socket as never, { getSessionForViewer: () => allowed ? session : undefined } as never);
   let result: any; const next = defaultBehaviors(); next.autoEat = true;
   handlers.get('bot:behaviors:update')!('owner-session', next, (r: unknown) => { result = r; });
-  assert.equal(result.ok, false); assert.equal(session.getInfo().behaviors?.settings.autoEat, false);
+  assert.equal(result.ok, false); assert.equal(session.getInfo().upkeep?.settings.autoEat, false);
   allowed = true; handlers.get('bot:behaviors:update')!('owner-session', next, (r: unknown) => { result = r; });
   assert.equal(result.ok, true); next.autoEat = false;
-  assert.equal(session.getInfo().behaviors?.settings.autoEat, true);
-  session.disconnect(); assert.equal(session.getInfo().behaviors?.settings.autoEat, true);
+  assert.equal(session.getInfo().upkeep?.settings.autoEat, true);
+  session.disconnect(); assert.equal(session.getInfo().upkeep?.settings.autoEat, true);
 });
 
-test('auto-eat initializes after delayed plugin injection and logs an actual meal outcome', async t => {
-  const timer = clock(t); const { bot } = foodFixture(); const plugin = bot.autoEat;
-  Reflect.deleteProperty(bot, 'autoEat'); // Match createBot before inject_allowed.
-  const settings = defaultBehaviors(); settings.autoEat = true;
-  const statuses: BehaviorStatus[] = [], logs: string[] = [];
-  const runtime = new IdleBehaviors(bot, settings, () => true, s => statuses.push(s), message => logs.push(message), undefined, timer.now);
-  t.after(() => runtime.dispose());
-  await timer.advance(1_000); assert.match(statuses.at(-1)!.detail, /initialize/);
-  bot.autoEat = plugin; await timer.advance(1_000);
-  assert.equal(plugin.isEating, true); assert.ok(logs.includes('Auto-eat started.'));
-  bot._client.emit('entity_status', { entityId: bot.entity.id, entityStatus: 9 }); await flush(); await flush();
-  assert.equal(runtime.busy, false); assert.ok(logs.includes('Auto-eat completed.'));
-});
 
-test('auto-eat explains full hunger and missing food without repeatedly starting meals', async t => {
-  const timer = clock(t); const { bot } = foodFixture(); Object.assign(bot, { food: 20, health: 1 });
-  const settings = defaultBehaviors(); settings.autoEat = true;
-  const statuses: BehaviorStatus[] = [], logs: string[] = [];
-  const runtime = new IdleBehaviors(bot, settings, () => true, s => statuses.push(s), message => logs.push(message), undefined, timer.now);
-  t.after(() => runtime.dispose());
-  await timer.advance(1_000); assert.equal(runtime.busy, false); assert.match(statuses.at(-1)!.detail, /Hunger is full/);
-  bot.food = 19; bot.inventory.items = () => [];
-  await timer.advance(1_000); assert.match(statuses.at(-1)!.detail, /No suitable food/);
-  await timer.advance(5_000); assert.equal(logs.filter(message => /No suitable food/.test(message)).length, 1);
-  assert.equal(logs.includes('Auto-eat started.'), false);
-});
 
 test('self-defense player death/despawn while looking cannot attack a removed or respawned player', async t => {
   const timer = clock(t); const { bot, alex, calls } = fixture(); delete bot.entities[3];
   const player = alex.entity!; Object.assign(player, { height: 1.8 });
   const settings = defaultBehaviors(); settings.selfDefense = { enabled: true, mode: 'fight', durationSeconds: 10 };
   const logs: string[] = [];
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, message => logs.push(message), null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, message => logs.push(message), timer.now);
   t.after(() => runtime.dispose());
   bot.emit('entityHurt', bot.entity, player); await flush(); await flush();
   let finishLook!: () => void;
@@ -294,30 +234,10 @@ test('death while PvP startup is pending invalidates the entity even before desp
   let release!: () => void;
   bot.pvp.attack = async target => { await new Promise<void>(resolve => { release = resolve; }); await attack.call(bot.pvp, target); };
   const settings = defaultBehaviors(); settings.selfDefense = { enabled: true, mode: 'fight', durationSeconds: 10 };
-  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, null, timer.now);
+  const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, timer.now);
   t.after(() => runtime.dispose()); bot.emit('entityHurt', bot.entity, player); await flush(); await flush();
   assert.equal(typeof release, 'function'); bot.emit('entityDead', player);
   // entityDead does not necessarily remove the entity or flip isValid yet.
   release(); await flush(); await flush(); assert.equal(bot.pvp.target, undefined);
   await timer.advance(333); assert.equal(bot.pvp.target, undefined);
-});
-
-test('failed meals log failure without a misleading completed event; settings changes are logged', async t => {
-  const timer = clock(t); const { bot } = fixture(); const logs: string[] = [];
-  const runtime = new IdleBehaviors(bot, defaultBehaviors(), () => true, () => {}, message => logs.push(message),
-    { eat: async () => { throw new Error('no food'); } }, timer.now);
-  t.after(() => runtime.dispose()); const settings = defaultBehaviors(); settings.autoEat = true;
-  runtime.update(settings); await timer.advance(1_000);
-  assert.ok(logs.includes('Auto-eat enabled.')); assert.ok(logs.some(m => /could not finish/.test(m)));
-  assert.equal(logs.includes('Auto-eat completed.'), false);
-});
-
-test('missing food registry or a failing availability probe cannot escape the idle timer', async t => {
-  const timer = clock(t); const { bot } = foodFixture();
-  Reflect.deleteProperty(bot.registry, 'foodsByName');
-  const settings = defaultBehaviors(); settings.autoEat = true;
-  const statuses: BehaviorStatus[] = [];
-  const runtime = new IdleBehaviors(bot, settings, () => true, s => statuses.push(s), () => {}, undefined, timer.now);
-  t.after(() => runtime.dispose());
-  await timer.advance(1_000); assert.match(statuses.at(-1)!.detail, /food registry/); assert.equal(runtime.busy, false);
 });

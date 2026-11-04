@@ -9,6 +9,7 @@ import PlayerListPanel from '../components/PlayerListPanel';
 import PlayerRolesPanel from '../components/PlayerRolesPanel';
 import AdBanner from '../components/AdBanner';
 import BehaviorPanel from '../components/BehaviorPanel';
+import UpkeepPanel from '../components/UpkeepPanel';
 import './DashboardPage.css';
 
 export default function DashboardPage() {
@@ -33,6 +34,7 @@ export default function DashboardPage() {
     playerList,
     playerRoles,
     updateBehaviors,
+    updateUpkeep,
   } = useBotSession();
 
   const isActive = connected && !isRestoring && botInfo !== null && (botInfo.state === 'idle' || botInfo.state === 'task');
@@ -124,6 +126,8 @@ export default function DashboardPage() {
           )}
           {botInfo?.behaviors && <BehaviorPanel key={botInfo.sessionId} status={botInfo.behaviors}
             connected={connected && !isRestoring} onUpdate={updateBehaviors} />}
+          {botInfo?.upkeep && <UpkeepPanel key={`upkeep-${botInfo.sessionId}`} status={botInfo.upkeep}
+            connected={connected && !isRestoring} onUpdate={updateUpkeep} />}
         </div>
 
         {/* Right Column */}

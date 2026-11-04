@@ -1,154 +1,114 @@
-import { Bot } from 'mineflayer';
+import type { Bot } from 'mineflayer';
 import pkg from 'mineflayer-pathfinder';
-const { goals } = pkg;
 import { Vec3 } from 'vec3';
-import { ExcavateRegion } from '../types.js';
-
+import type { ExcavateRegion } from '../types.js';
+import { EquipmentIntent, EquipmentUnavailable, type EquipmentOwner, type EquipmentService } from '../runtime/equipment.js';
+const { goals } = pkg;
 export const MAX_EXCAVATE_BLOCKS = 10_000;
-
 export interface ExcavateCallbacks {
-	onEvent: (type: 'info' | 'warning' | 'error', message: string) => void;
-	onProgress: (current: number, total: number) => void;
-	onComplete: () => void;
-	onAbort: () => void;
+  onEvent: (type: 'info' | 'warning' | 'error', message: string) => void;
+  onProgress: (current: number, total: number) => void;
+  onComplete: () => void;
+  onAbort: () => void;
 }
-
-/**
- * Manages a single rectangular-area excavation task.
- *
- * Call run() to start; call abort() from any other context to cancel mid-task.
- * The task is completely stateless after run() resolves — create a new instance
- * for each excavation job.
- */
-export class ExcavateTask {
-	private abortFlag = false;
-
-	abort(): void {
-		this.abortFlag = true;
-	}
-
-	async run(
-		bot: Bot,
-		region: ExcavateRegion,
-		callbacks: ExcavateCallbacks,
-	): Promise<void> {
-		const { onEvent, onProgress, onComplete, onAbort } = callbacks;
-
-		// Normalise so min <= max on every axis.
-		const minX = Math.min(region.x1, region.x2);
-		const maxX = Math.max(region.x1, region.x2);
-		const minY = Math.min(region.y1, region.y2);
-		const maxY = Math.max(region.y1, region.y2);
-		const minZ = Math.min(region.z1, region.z2);
-		const maxZ = Math.max(region.z1, region.z2);
-
-		const totalBlocks =
-			(maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
-
-		if (totalBlocks > MAX_EXCAVATE_BLOCKS) {
-			onEvent(
-				'error',
-				`Excavation region too large: ${totalBlocks} blocks (max ${MAX_EXCAVATE_BLOCKS}). Task cancelled.`,
-			);
-			onAbort();
-			return;
-		}
-
-		onEvent(
-			'info',
-			`Starting excavation of ${totalBlocks} blocks ` +
-				`(${minX},${minY},${minZ}) → (${maxX},${maxY},${maxZ}).`,
-		);
-
-		// Build the ordered dig list: top-down Y, zigzag XZ within each layer.
-		const positions = buildDigOrder(minX, maxX, minY, maxY, minZ, maxZ);
-
-		let digCount = 0;
-
-		for (const pos of positions) {
-			if (this.abortFlag) {
-				onEvent('info', 'Excavation aborted by stop command.');
-				onAbort();
-				return;
-			}
-
-			const block = bot.blockAt(pos);
-
-			// Skip air, null, or bedrock/barrier-class non-diggable blocks.
-			if (!block || block.name === 'air' || !block.diggable) {
-				digCount++;
-				onProgress(digCount, positions.length);
-				continue;
-			}
-
-			// Navigate to within 3 blocks of the target.
-			try {
-				await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3));
-			} catch {
-				// Pathfinder may fail (unreachable, obstacle). Skip this block and continue.
-				onEvent(
-					'warning',
-					`Cannot reach block at (${pos.x},${pos.y},${pos.z}) — skipping.`,
-				);
-				digCount++;
-				onProgress(digCount, positions.length);
-				continue;
-			}
-
-			if (this.abortFlag) {
-				onEvent('info', 'Excavation aborted by stop command.');
-				onAbort();
-				return;
-			}
-
-			// Re-fetch the block after navigation (another player may have removed it).
-			const freshBlock = bot.blockAt(pos);
-			if (!freshBlock || freshBlock.name === 'air' || !freshBlock.diggable) {
-				digCount++;
-				onProgress(digCount, positions.length);
-				continue;
-			}
-
-			// Equip the optimal mining tool for this block type.
-			try {
-				await bot.tool.equipForBlock(freshBlock, { requireHarvest: false });
-			} catch {
-				// No tool available — bot will dig with bare hands. Non-fatal.
-				onEvent(
-					'warning',
-					`No optimal tool for ${freshBlock.name}; digging bare-handed.`,
-				);
-			}
-
-			// Dig only if within reach (canDigBlock checks ≤5.1 blocks from eye).
-			if (!bot.canDigBlock(freshBlock)) {
-				onEvent(
-					'warning',
-					`Block (${pos.x},${pos.y},${pos.z}) still out of reach after navigation — skipping.`,
-				);
-				digCount++;
-				onProgress(digCount, positions.length);
-				continue;
-			}
-
-			try {
-				// forceLook=true: bot turns to face the block before digging.
-				await bot.dig(freshBlock, true);
-			} catch (err) {
-				onEvent(
-					'warning',
-					`Failed to dig block at (${pos.x},${pos.y},${pos.z}): ${(err as Error).message}`,
-				);
-			}
-
-			digCount++;
-			onProgress(digCount, positions.length);
-		}
-
-		if (!this.abortFlag) {
-			onComplete();
-		}
-	}
+/** Checkpointed excavation: every hand-dependent step is behind the same item intent. */
+export class ExcavateTask implements EquipmentOwner {
+  readonly equipmentIntent = new EquipmentIntent();
+  private readonly cancellation = new AbortController();
+  private running = false;
+  private bot: Bot | null = null;
+  private pauseRequested = false;
+  private acknowledge: ((value: boolean) => void) | null = null;
+  private continueRun: (() => void) | null = null;
+  private resumeGate: Promise<void> = Promise.resolve();
+  get active(): boolean { return this.running && !this.cancellation.signal.aborted; }
+  constructor(private readonly equipment?: EquipmentService) {}
+  abort(): void {
+    this.cancellation.abort(); this.acknowledge?.(false); this.continueRun?.();
+    try { this.bot?.pathfinder.setGoal(null); } catch { /* connection may have ended */ }
+    try { if (this.bot?.targetDigBlock) void Promise.resolve(this.bot.stopDigging()).catch(() => {}); } catch { /* connection may have ended */ }
+  }
+  pauseForUpkeep(signal: AbortSignal): Promise<boolean> {
+    if (!this.active || signal.aborted) return Promise.resolve(false);
+    this.pauseRequested = true;
+    this.resumeGate = new Promise(resolve => { this.continueRun = resolve; });
+    return new Promise(resolve => {
+      const canceled = () => {
+        this.pauseRequested = false; this.continueRun?.(); this.acknowledge?.(false);
+      };
+      this.acknowledge = value => { signal.removeEventListener('abort', canceled); this.acknowledge = null; resolve(value); };
+      signal.addEventListener('abort', canceled, { once: true });
+    });
+  }
+  async resumeAfterUpkeep(): Promise<void> { this.pauseRequested = false; this.continueRun?.(); this.continueRun = null; }
+  refreshEquipmentIntent(): void {
+    const requirement = this.equipmentIntent.requirement;
+    if (requirement.kind !== 'best' || requirement.policy !== 'mining' || !requirement.context || !this.bot) return;
+    const p = requirement.context.position;
+    const block = this.bot.blockAt(new Vec3(p.x, p.y, p.z));
+    if (!block || !block.diggable || block.name === 'air') this.equipmentIntent.publish({ kind: 'unrestricted' });
+  }
+  private async checkpoint(): Promise<boolean> {
+    if (!this.active) return false;
+    if (this.pauseRequested) { this.acknowledge?.(true); await this.resumeGate; }
+    return this.active;
+  }
+  async run(bot: Bot, region: ExcavateRegion, callbacks: ExcavateCallbacks): Promise<void> {
+    this.running = true;
+    this.bot = bot;
+    const dimension = bot.game.dimension;
+    const abort = () => this.abort();
+    const game = () => { if (bot.game.dimension !== dimension) this.abort(); };
+    bot.on('death', abort); bot.on('end', abort); bot.on('game', game);
+    let completed = false;
+    try {
+      const coordinates = Object.values(region);
+      const volume = (Math.abs(region.x2 - region.x1) + 1) * (Math.abs(region.y2 - region.y1) + 1) * (Math.abs(region.z2 - region.z1) + 1);
+      if (coordinates.length !== 6 || !coordinates.every(Number.isSafeInteger) || volume > MAX_EXCAVATE_BLOCKS) throw new Error('Invalid or oversized excavation region.');
+      const positions = buildDigOrder(Math.min(region.x1, region.x2), Math.max(region.x1, region.x2),
+        Math.min(region.y1, region.y2), Math.max(region.y1, region.y2), Math.min(region.z1, region.z2), Math.max(region.z1, region.z2));
+      callbacks.onEvent('info', `Starting excavation of ${positions.length} blocks.`);
+      for (let index = 0; index < positions.length; index++) {
+        if (!await this.checkpoint()) return;
+        const pos = positions[index];
+        let block = bot.blockAt(pos);
+        if (!block || block.name === 'air' || !block.diggable) { callbacks.onProgress(index + 1, positions.length); continue; }
+        this.equipmentIntent.publish({ kind: 'best', policy: 'mining', context: { position: { x: pos.x, y: pos.y, z: pos.z } } });
+        try { await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3)); }
+        catch { if (!this.active) return; callbacks.onEvent('warning', `Cannot reach block at ${pos}; skipping.`); continue; }
+        if (!await this.checkpoint()) return;
+        block = bot.blockAt(pos);
+        if (!block || block.name === 'air' || !block.diggable) continue;
+        try {
+          if (this.equipment) await this.equipment.restore(this, this.cancellation.signal);
+          else await bot.tool.equipForBlock(block, { requireHarvest: false });
+        } catch (error) {
+          if (!this.active) return;
+          callbacks.onEvent('warning', `Required mining tool unavailable: ${String(error)}`);
+          if (this.equipment && error instanceof EquipmentUnavailable) continue;
+          throw error;
+        }
+        if (!await this.checkpoint()) return;
+        block = bot.blockAt(pos);
+        if (!block || !block.diggable || !bot.canDigBlock(block)) continue;
+        // Readiness is reconciled again if the block changed while a meal ran.
+        if (this.equipment) await this.equipment.restore(this, this.cancellation.signal);
+        if (!this.active) return;
+        try { await bot.dig(block, true); }
+        catch (error) { if (this.active) callbacks.onEvent('warning', `Failed to dig ${pos}: ${String(error)}`); }
+        if (!this.active) return;
+        callbacks.onProgress(index + 1, positions.length);
+      }
+      if (!await this.checkpoint()) return;
+      completed = true;
+    } finally {
+      bot.removeListener('death', abort); bot.removeListener('end', abort); bot.removeListener('game', game);
+      this.running = false;
+      this.bot = null;
+      this.acknowledge?.(false); this.continueRun?.();
+      if (completed) callbacks.onComplete(); else callbacks.onAbort();
+    }
+  }
 }
 
 /**

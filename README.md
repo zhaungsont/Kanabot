@@ -12,7 +12,7 @@ Kanabot is a web platform that lets Minecraft players deploy, configure, and con
 
 For gameplay roles, permission definitions, and the dashboard role editor, see [BOT_OWNERSHIP_DESIGN.md](docs/BOT_OWNERSHIP_DESIGN.md).
 
-The proposed [Bot Upkeep design](docs/BOT_UPKEEP_DESIGN.md) separates coexisting Idle Behaviors (only outside tasks) from Auto-eat/Auto-armor Upkeep (during or outside supported tasks). It defines generic task item requirements and coordinated restoration after eating. This is a future design; the implemented automatic food/defense controller is still idle-only.
+Implemented [Bot Upkeep](docs/BOT_UPKEEP_DESIGN.md) maintains food and armor during or outside tasks. Separate Idle Behaviors owns Fight/Flight and bounded Avoid drowning; Sleep remains TODO. Generic task item requirements and verified restoration coordinate food use without coupling the UI or food policy to task implementations.
 
 ```text
 Kanabot/
@@ -27,8 +27,10 @@ Kanabot/
 │   │   ├── botManager.ts       # Stable IDs, access checks, observers, snapshots
 │   │   ├── botSession.ts       # Mineflayer lifecycle + feature orchestration
 │   │   ├── players/            # Roster, targets, whispers, player socket adapter
-│   │   ├── behaviors/          # Idle auto-eat/self-defense and settings
+│   │   ├── behaviors/          # Idle self-defense/drowning, food adapter
 │   │   ├── runtime/            # Shared scoped combat lease
+│   │   ├── upkeep/             # Auto-eat/armor scheduling and handoffs
+│   │   ├── runtime/            # Shared equipment lane and combat compatibility
 │   │   ├── tasks/              # Follow/attack/excavation + modular protect/ runtime
 │   │   └── types.ts            # Shared contract re-exports
 │   ├── test/                   # Regression tests + simulated Mineflayer fixtures
@@ -72,16 +74,24 @@ flowchart LR
         Features["Player modules / follow, attack, excavation tasks"]
         Protect["ProtectTask: serialized escort / combat / return"]
         Threats["Threat observer / pure selector"]
-        Combat["Scoped PvP adapter / read-only equipment port"]
+        Combat["Scoped PvP adapter / held readiness"]
         Gateway <--> Manager
         Manager <--> Session
         Session <--> Features
         Session <--> Protect
         Protect --> Threats
         Protect --> Combat
-        Idle["Idle behaviors: auto-eat / bounded self-defense"]
+        Idle["Idle behaviors: self-defense / avoid drowning"]
         Session <--> Idle
         Idle --> Combat
+        Upkeep["Bot Upkeep: auto-eat / auto-armor"]
+        Equipment["EquipmentService: serialized inventory / task item intents"]
+        Session <--> Upkeep
+        Upkeep <--> Features
+        Upkeep <--> Protect
+        Upkeep --> Equipment
+        Features --> Equipment
+        Protect --> Equipment
     end
     Contracts["shared/: compile-time JSON and event contracts"]
     MC["User's Minecraft server"]
@@ -243,8 +253,8 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Real-time chat** — mirror in-game chat; send messages from browser
 - **Follow** — bot follows a specified player, staying within 3 blocks
 - **Protect** — escorts within 3 blocks, prioritizes supported hostile mobs around the player using damage evidence/proximity/visibility, and returns when separated by more than 12 blocks. Bounded decisions, target retention, path-failure cooldowns, and serialized cleanup live in independent runtime modules. `!guard` and legacy dashboard actions remain aliases.
-- **Protect equipment placeholder** — melee requires an already-held sword/axe. No automatic selection/equipping is performed; losing the held weapon resumes escort-only behavior. The dashboard shows readiness and task state. Standalone Attack and existing armor/tool behavior are unchanged. See [Protect design](docs/PROTECT_DESIGN.md) and [equipment follow-up](docs/EQUIPMENT_DESIGN.md).
-- **Armor auto-equip** — on spawn, bot equips the best available armor via `mineflayer-armor-manager`
+- **Shared equipment foundation** — tasks declare their current item requirement. Protect/Attack prepare supported melee gear at startup and after food; excavation selects against the current block. Verified restoration precedes resumed hand-dependent work. Continuous weapon optimization remains deferred. See [equipment details](docs/EQUIPMENT_DESIGN.md).
+- **Opt-in Auto-armor** — Upkeep equips improved four-slot armor through a serialized inventory executor; compatible movement continues. No autonomous armor plugin writes.
 - **Stop** — cancel current task, return to idle
 - **Event log** — terminal-style stream of bot lifecycle events
 - **Auto idle timeout** — bot disconnects after 10 min of inactivity
@@ -253,11 +263,11 @@ VITE_BACKEND_URL=http://localhost:3001
 - **Player actions** — private whispers, follow, and confirmed attack with Stop controls; follow/attack use independent task modules with target, chunk, distance, pathfinding, and cancellation checks
 - **Player roles** — assign usernames Visitor, Crew, or Owner on the dashboard, independently of the live roster. Visitor may follow; Crew adds protect/excavation; Owner adds attack/stop. Changes affect new commands while existing tasks continue.
 
-Optional **Auto-eat** and **Self-defense** controls run only while idle. Choose Fight/Flight and a fixed response duration (1–120 seconds). Both default off, continue without a dashboard, and yield to tasks through the cleanup gate. Fight requires a held weapon; otherwise the bot flees. See [idle behavior design](docs/IDLE_BEHAVIORS.md) for scope, compatibility and resource ownership.
+Separate **Bot Upkeep** controls offer Auto-eat/Auto-armor during or outside tasks, both off by default. Food waits for a task safe point, then restores/verifies the current tool before resuming. **Idle Behaviors** offers Fight/Flight (1–120 seconds) and bounded Avoid drowning, only without a task; Sleep is TODO. Settings continue without a dashboard. See [upkeep](docs/BOT_UPKEEP_DESIGN.md) and [idle behavior](docs/IDLE_BEHAVIORS.md) details.
 
 Roles and inherited grants are defined in `backend/src/access/roleCatalog.ts`; task-to-permission mappings are in `backend/src/commands/taskPermissions.ts`. Assignments are held in memory by `PlayerRoleStore` for each bot session and survive browser refresh, but not bot retirement or backend restart. Dashboard administrators remain independent of Minecraft player roles.
 
-The proposed [Protect overhaul](docs/PROTECT_DESIGN.md) and [equipment-module follow-up](docs/EQUIPMENT_DESIGN.md) are awaiting approval. Protect's first implementation will use a read-only equipment placeholder; automatic equipment selection is a separate later scope.
+The [Protect runtime](docs/PROTECT_DESIGN.md) and [shared equipment foundation](docs/EQUIPMENT_DESIGN.md) are implemented. Richer equipment optimization and player-threat acquisition remain future work.
 
 ### Player list and task modules
 
@@ -291,7 +301,7 @@ With the Node version from `backend/.nvmrc` active, run `npm test` in `backend/`
 |---|---|
 | Backend runtime | Node.js 24.15.0 |
 | Backend framework | Express + Socket.IO |
-| Bot engine | mineflayer + mineflayer-pathfinder + mineflayer-pvp + mineflayer-armor-manager |
+| Bot engine | mineflayer + mineflayer-pathfinder + mineflayer-pvp + mineflayer-auto-eat + shared equipment executor |
 | Frontend framework | React 18 + TypeScript |
 | Frontend build | Vite |
 | Real-time | Socket.IO (WebSocket) |
