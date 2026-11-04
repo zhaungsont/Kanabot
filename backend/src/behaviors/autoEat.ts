@@ -13,6 +13,7 @@ export class AutoEatAdapter {
     plugin.buildEatingListener = (item, timeout) => this.waitForConsumption(item, timeout);
   }
   availability(): string | null {
+    if (!this.bot.registry.foodsByName) return 'Waiting for the server food registry to initialize.';
     return this.bot.autoEat.findBestChoices(this.bot.inventory.items(), this.bot.autoEat.opts.priority).length
       ? null : 'No suitable food in inventory. Add food such as bread or cooked meat.';
   }

@@ -62,7 +62,9 @@ export class IdleBehaviors {
     }
     if (!(this.bot.food <= 15 || this.bot.health < 14)) { this.idleNotice('Auto-eat ready: no meal needed yet.'); return; }
     if (this.now() < this.retryAt) return;
-    const unavailable = this.eating.availability?.();
+    let unavailable: string | null | undefined;
+    try { unavailable = this.eating.availability?.(); }
+    catch (error) { unavailable = `Food availability check failed: ${String(error)}`; }
     if (unavailable) {
       this.idleNotice(unavailable);
       if (this.now() - this.eatWarningAt >= 30_000) { this.eatWarningAt = this.now(); this.log(`Auto-eat: ${unavailable}`); }

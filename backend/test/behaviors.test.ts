@@ -311,3 +311,13 @@ test('failed meals log failure without a misleading completed event; settings ch
   assert.ok(logs.includes('Auto-eat enabled.')); assert.ok(logs.some(m => /could not finish/.test(m)));
   assert.equal(logs.includes('Auto-eat completed.'), false);
 });
+
+test('missing food registry or a failing availability probe cannot escape the idle timer', async t => {
+  const timer = clock(t); const { bot } = foodFixture();
+  Reflect.deleteProperty(bot.registry, 'foodsByName');
+  const settings = defaultBehaviors(); settings.autoEat = true;
+  const statuses: BehaviorStatus[] = [];
+  const runtime = new IdleBehaviors(bot, settings, () => true, s => statuses.push(s), () => {}, undefined, timer.now);
+  t.after(() => runtime.dispose());
+  await timer.advance(1_000); assert.match(statuses.at(-1)!.detail, /food registry/); assert.equal(runtime.busy, false);
+});
