@@ -8,6 +8,21 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Scoped excavation implementation design — 2026-11-05
+
+- Replaced the earlier option catalog with the one-explicit-coordinate-plus-directional-sizes design. Look at two corners is reserved for a future release; other input options are discarded.
+- Added API evidence/methodology, request-to-completion and access-retreat diagrams, progressive chunk observation, support-preserving frontier planning, configurable budgets, evidence-based results and concrete development/release gates. Clarified which limits are product policy and which behaviors are library constraints. Documentation only.
+
+### Digging API clarification — 2026-11-05
+
+- Clarified that explicit `lookAt()` is optional and `dig(block, 'ignore')` skips head movement. Qualified the delayed-look cancellation probe: it does not establish ordinary network-stop timing with the stock forced-look implementation. No runtime changes.
+
+### Excavation review and interaction proposal — 2026-11-05
+
+- Added [excavation review and design](EXCAVATION_DESIGN.md), covering current execution risks, source-backed API feasibility, private directional/relative-origin commands, look/support corner selection, conditional arrow capture and an optional participating-server bridge.
+- Specified frozen previews, inclusive size/axis rules, issuer-scoped confirmation/cancellation, module boundaries, execution limits and phased verification. All new commands and adapters remain proposals.
+- Reproduced an installed-plugin pre-dig cancellation gap, empty-noPath goto resolution and zero-angle cursor rejection using offline fixtures. Reopened the relevant cancellation finding and recorded remaining mutation/observation boundaries. Documentation only; no runtime fix or live-server test is included.
+
 ### Task lifecycle and failure-path hardening — 2026-11-05
 
 - Added one transport-independent foreground TaskRuntime/TaskCoordinator contract for Follow, Attack, Protect and excavation. Stop and natural teardown retain ownership until cleanup is confirmed; pending cleanup reports trouble after ten seconds and rejected cleanup blocks successors until retirement.

@@ -2,6 +2,8 @@
 
 Implemented 2026-11-05. Follow, Attack, Protect and excavation share the transport-independent `TaskRuntime` contract in [taskRuntime.ts](../backend/src/tasks/taskRuntime.ts). This is an in-process execution contract, not a durable cloud command protocol.
 
+The [excavation review](EXCAVATION_DESIGN.md#12-relation-to-existing-review-findings) subsequently reproduced a conditional library-internal pre-dig cancellation gap using a deliberately deferred look. The shared lease/cleanup mechanism does not itself make every plugin operation cancellation-aware; a delayed internal look can allow an initial dig after Stop. The stock forced-look path does not wait for gradual rotation; an ordinary network-triggered reproduction remains unverified. This coverage question remains open as KI-002.
+
 ## Responsibilities
 
 - `start()` starts owned work. Its promise can describe startup or the whole operation; callers use `completion` for the terminal result, never the return of `start()` as a completion signal.

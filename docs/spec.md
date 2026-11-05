@@ -280,6 +280,8 @@ Task/manual requests cancel and return a retry explanation during cleanup; they 
 
 #### Excavate
 
+The current implementation is described below. [EXCAVATION_DESIGN.md](EXCAVATION_DESIGN.md) reviews its remaining defects and specifies the next one-coordinate-plus-directional-sizes release with private preparation/confirmation and access-aware execution. Look-at-two-corners input is future work; other selection options have been discarded. Those commands and adapters are not implemented; inbound whispers currently mirror messages without dispatching tasks.
+
 - Command (in-game chat): `!dig <x1> <y1> <z1> <x2> <y2> <z2>` — two absolute corner coordinates
 - Also triggerable from frontend ActionPanel via `bot:action { type: 'excavate', region }`
 - Implementation: `ExcavateTask` class in `backend/src/tasks/excavateTask.ts`
@@ -292,7 +294,7 @@ Task/manual requests cancel and return a retry explanation during cleanup; they 
   6. Include bare hands when dig time is finite. Empty-hand selection verifies an empty hotbar slot; it never drops an item to make room
   7. Progress milestones at every 10% are emitted to EventLog
   8. Report total/dug/already-clear/skipped/failed/unvisited counts. Unloaded or non-diggable positions are skipped; navigation/equipment/dig failures are counted. A traversal with skips/failures reports partial completion, not success. Only full completion sends `"Excavation complete!"`
-- Cancellation: `!stop` or Stop Task aborts owned work, requests active navigation/digging cancellation, checks every asynchronous boundary, and drains cleanup before releasing the shared task lease. Failed cancellation retains ownership; a stopped traversal reports unvisited positions
+- Cancellation: `!stop` or Stop Task aborts owned work, requests active navigation/digging cancellation, checks application-level asynchronous boundaries, and drains cleanup before releasing the shared task lease. Failed cancellation retains ownership; a stopped traversal reports unvisited positions. A deliberately delayed internal look can start digging after Stop in a failure-injection fixture; reproduction with stock forced-look timing remains unverified. This conditional gap is tracked in [KI-002](KNOWN_ISSUES.md#ki-002--excavation-cancellation-can-dig-after-stop-and-retain-a-stale-task)
 
 #### Basic Greeting
 
