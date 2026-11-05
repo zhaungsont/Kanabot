@@ -183,6 +183,10 @@ test('all socket command adapters require an authorized attached viewer', () => 
   registerSessionHandlers(attacker.value as never, f.manager); registerPlayerHandlers(attacker.value as never, f.manager);
   attacker.handlers.get('bot:chat')!(saved.sessionId, 'hello');
   attacker.handlers.get('bot:action')!(saved.sessionId, { type: 'stop' });
+  let excavationResult: any;
+  attacker.handlers.get('bot:excavation')!(saved.sessionId, { type: 'confirm', planId: 'invented' }, (value: unknown) => { excavationResult = value; });
+  assert.equal(excavationResult.ok, false);
+  assert.match(excavationResult.error, /Attach/);
   attacker.handlers.get('bot:unequip')!(saved.sessionId, 'head');
   attacker.handlers.get('bot:playerAction')!(saved.sessionId, { type: 'follow', target: 'Alex' }, () => {});
   attacker.handlers.get('bot:disconnect')!(saved.sessionId, () => {});

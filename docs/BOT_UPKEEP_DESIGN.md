@@ -83,7 +83,7 @@ Tasks publish **intent**, not the item currently visible in `heldItem`. Food nev
 | Requirement | Delivered behavior |
 | --- | --- |
 | Best `melee` | Supported usable sword/axe, material tier first, sword preference, small Sharpness tie weight, stable slot tie-break |
-| Best `mining` | Re-fetch current block and rank usable inventory items by `block.digTime`, enchantments/effects, stable slot tie-break; retains excavation's non-harvest-required scope |
+| Best `excavation` | Re-fetch current block, select its version-specific preferred tool using material multipliers and harvest tier, rank usable tools by digTime/enchantments/effects and stable slot order; verify after awaits. No silent missing-tool fallback |
 | Specific item | Restore a matching current item; no substitution with an arbitrary weapon |
 | Empty hand | Switch to a checked empty hotbar slot; block if none exists, **never drop an item to satisfy this requirement** |
 | Unrestricted | Preserve the prior item if still safely available; no automatic weapon choice |

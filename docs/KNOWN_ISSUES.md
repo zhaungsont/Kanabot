@@ -16,11 +16,9 @@ The lifecycle change now requires an authorized attached viewer for every dashbo
 
 ## KI-002 — Excavation cancellation can dig after Stop and retain a stale task
 
-**Partially addressed · Reopened for conditional startup coverage 2026-11-05 · Cancellation**
+**Resolved for guarded excavation preparation · 2026-11-05; live compatibility pending**
 
-Excavation checks cancellation around its application-level awaits, requests active digging/navigation cancellation, and guarantees one terminal result after cleanup. Its shared task lease stays held until confirmed cleanup, including on the final block. It also owns death/end/dimension-change observers and removes them on teardown. The existing mock regressions pause final navigation, equipment and digging, issue Stop and resolve late; within those fixtures no new dig starts, one stopped outcome is delivered and the task retires. Live server timing still requires validation.
-
-Those regressions cover the application's mocked operation boundaries. The excavation review reproduced a deeper gap with the installed digging plugin: Stop during its internal pre-dig `lookAt` sees no active `targetDigBlock`; after that look resolves, the plugin sends start/finish digging packets despite the task eventually reporting stopped. Confirmed-cleanup ownership remains useful, but cannot prevent that late initial side effect. [EX-02 and the proposed dig-port boundary](EXCAVATION_DESIGN.md#82-dig-api-policy-and-cancellation) document the evidence and a constrained API-feasible approach. The fixture deliberately delays `lookAt`; stock forced look returns without waiting for gradual rotation, so an ordinary network-triggered race in the current `dig(block, true)` configuration has not been established. A separate application-level look is not required to dig. No runtime fix is implemented by this review.
+Excavation retains the shared task lease while navigation/equipment/dig work and cleanup drain. It now guards the digging plugin's existing internal look await against cancellation and changed safety conditions, without adding a separate look requirement. An installed Mineflayer fixture deliberately delays that internal await, issues Stop and verifies no start-dig packet follows; another verifies the supplied face vector and normal completion. Stock forced look does not wait for gradual rotation, so the earlier probe was conditional, not proof of an ordinary network-triggered race. Cleanup failures still block successors until retirement. No live-server timing claim follows from these fixtures.
 
 ## KI-003 — BotSession combines too many responsibilities
 
@@ -98,23 +96,21 @@ Deployment retirement controls are separate from game actions and enabled for ev
 
 ## KI-013 — Excavation could announce completion after skipping all work
 
-**Resolved · 2026-11-05**
+**Resolved for the bounded first release · 2026-11-05**
 
-The mining policy explicitly permits finite bare-hand selection, using a verified empty hotbar slot rather than dropping items. Excavation distinguishes full/partial/stopped/failed results and reports dug, already-clear, skipped, failed and unvisited counts. Unloaded/non-diggable blocks and navigation/equipment/dig failures cannot produce a full-success announcement. Simulated empty-inventory and mixed-failure regressions cover this behavior; real-server dig timing/loot remains unverified.
-
-This resolves skipped-work accounting, not proof of server-approved removal. The installed digging plugin updates local world state optimistically; [EX-03](EXCAVATION_DESIGN.md#12-relation-to-existing-review-findings) tracks possible misleading success after server protection/rollback.
+Excavation reports verified-dug, initially/already clear, blocked/unknown, failed, unverified and unvisited counts. Incoming server block packets are distinguished from optimistic local updates; absent evidence stays unverified and cannot become trusted air in a later job on the same connection. A final scan and short stabilization period detect observed rollback. Completion also requires verified return to staging. Server compatibility, suppressed acknowledgements and changes after the final window remain acceptance limitations.
 
 ## KI-014 — Excavation navigation can mutate outside its region
 
-**Open · High · Excavation scope/resource ownership · 2026-11-05**
+**Resolved for constrained external walking · 2026-11-05**
 
-Excavation inherits default pathfinder movements instead of leasing a constrained policy. That permits navigation-time breaking/placing outside the selected region and plugin equipment writes outside the shared inventory lane. Its 10,000-position cap and summary omit those side effects. [EX-01](EXCAVATION_DESIGN.md#12-relation-to-existing-review-findings) proposes non-destructive navigation plus task-owned approved digging. A scoped movement/effect-boundary fix and installed-plugin coverage are required; none is implemented here.
+Excavation installs a task-owned movement policy with breaking, placement/scaffolding, towers, parkour and drops disabled, excludes unsafe/out-of-envelope/inside-region standing cells, and restores original settings after owned work drains. Installed pathfinder search fixtures verify routes contain no break/place actions; arrival is verified separately from goto resolution. Direct digging remains under the task's shared equipment and safety boundary. Live physics and concurrent terrain changes still require acceptance testing.
 
 ## KI-015 — Excavation world-safety and observation limits remain incomplete
 
-**Open · High/Medium · Excavation reliability · 2026-11-05**
+**Partially addressed; advanced access and live acceptance deferred · 2026-11-05**
 
-Direct digging lacks shared container/fluid/gravity/support checks; proximity does not establish a usable face; inherited navigation and slow digging lack a task-wide budget. A dig promise/local block update alone does not prove server-approved removal. Private command dispatch, issuer-owned cancellation, preview identity, dimension-specific validation and richer reason/progress reporting are also proposed work. See the prioritized [excavation review](EXCAVATION_DESIGN.md#12-relation-to-existing-review-findings) and its [delivery plan](EXCAVATION_DESIGN.md#11-development-sequence-and-release-gates). These are documented follow-ups, not new runtime guarantees.
+The first release adds coordinate-plus-sizes chat/tell/dashboard preparation, issuer confirmation/cancellation, dimension validation, constrained external movement, target/halo/shape/container/fluid/gravity/occupancy checks, exact loaded ray coverage, preferred tool/harvest-tier selection, repeated safety checks, bounded attempts/deadlines and incoming-server evidence. It intentionally supports only flat full-block external terrain, with no pit entry, ramps, descent or progressive remote survey. Missing chunks, inaccessible deep cells or missing preferred tools produce incomplete results. Unverified world cells remain conservatively unknown across later jobs; passive chunk receipt recovery is deferred. [Implemented scope and remaining research](EXCAVATION_DESIGN.md#implemented-first-release) distinguish these boundaries. No live gameplay, protection/anti-cheat, or maximum solid-workload capacity has been verified.
 
 ## Completed foundation — browser-independent execution
 

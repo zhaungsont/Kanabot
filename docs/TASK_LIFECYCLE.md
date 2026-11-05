@@ -2,7 +2,7 @@
 
 Implemented 2026-11-05. Follow, Attack, Protect and excavation share the transport-independent `TaskRuntime` contract in [taskRuntime.ts](../backend/src/tasks/taskRuntime.ts). This is an in-process execution contract, not a durable cloud command protocol.
 
-The [excavation review](EXCAVATION_DESIGN.md#12-relation-to-existing-review-findings) subsequently reproduced a conditional library-internal pre-dig cancellation gap using a deliberately deferred look. The shared lease/cleanup mechanism does not itself make every plugin operation cancellation-aware; a delayed internal look can allow an initial dig after Stop. The stock forced-look path does not wait for gradual rotation; an ordinary network-triggered reproduction remains unverified. This coverage question remains open as KI-002.
+The [excavation review](EXCAVATION_DESIGN.md#implemented-first-release) reproduced a conditional library-internal pre-dig cancellation gap using a deliberately deferred look. The executor now guards that internal await and installed-library regressions verify cancellation before startup sends no dig packet. The shared lease remains necessary to drain owned work; it does not itself make arbitrary plugins cancellation-aware. Stock forced look does not wait for gradual rotation; live timing still requires acceptance testing.
 
 ## Responsibilities
 
@@ -17,9 +17,9 @@ BotSession composes concrete tasks, checks commands/targets, and projects coordi
 
 ## Excavation results
 
-Excavation counts `total`, `dug`, `alreadyClear`, `skipped`, `failed` and `unvisited`. Air in loaded world data is already clear; missing world data and non-diggable blocks are skipped. Navigation, equipment/readiness and digging failures are counted as failures. Skips or failures make a finished traversal partial. Cancellation leaves unvisited positions and reports stopped. Only a completed traversal without skips/failures emits the in-game completion announcement; no block-by-block durable checkpoint is implied.
+Excavation counts `total`, verified `dug`, `alreadyClear`, `skipped` (blocked/unknown), `failed`, `unverified` and `unvisited`, with bounded reason counts and return-to-staging status. Missing data never becomes clear. Incoming server block packets distinguish verified removal from optimistic local air; unverified cells remain unknown across later jobs on that connection. Final stabilization/scan and verified return are required for completion. Cancellation reports stopped and never starts an automatic return. Failed cleanup retains the gate and is reflected in excavation status. Terminal Minecraft feedback is private.
 
-The mining equipment policy includes finite bare-hand dig time, preserving the non-harvest-required scope. Selecting an empty hand uses a verified empty hotbar slot; a full hotbar does not authorize dropping an item. All food restoration uses that same current policy.
+The `excavation` equipment policy requires the current version's preferred tool and harvest tier, including usable durability. Hands are valid only for materials with no preferred tool that can be hand-harvested. Selecting an empty hand uses a verified empty hotbar slot, never an item drop. Food restoration reconciles that same live policy; the executor verifies it again immediately before digging and after internal look preparation.
 
 ## Connection and process failure boundaries
 
@@ -29,4 +29,4 @@ Unexpected uncaught exceptions and unhandled rejections terminate the backend wi
 
 ## Verification
 
-Simulated tests cover failed/pending cleanup, partial startup, cancellation during final navigation/equipment/digging, end-confirmed connection replacement, late callbacks, retirement/retry cancellation, excavation summaries and empty-inventory digging. Child-process tests verify fatal exit behavior. Server-rendered UI tests check retirement controls across all bot states; they do not prove browser interaction or gameplay compatibility. Run the backend regression suite and both application builds with the Node version in `backend/.nvmrc`.
+Simulated tests cover failed/pending cleanup, partial startup, cancellation during final navigation/equipment/digging, end-confirmed connection replacement, late callbacks, retirement/retry cancellation, excavation summaries, preferred-tool shortages, server evidence and non-destructive installed-pathfinder routes. Child-process tests verify fatal exit behavior. Server-rendered UI tests check retirement controls across all bot states; they do not prove browser interaction or gameplay compatibility. Run the backend regression suite and both application builds with the Node version in `backend/.nvmrc`.

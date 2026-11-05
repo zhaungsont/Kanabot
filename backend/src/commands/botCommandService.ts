@@ -20,7 +20,13 @@ export function validBotAction(value: unknown): value is BotAction {
 
 /** Authorization/creation boundary; scheduling and Mineflayer remain behind execute. */
 export class BotCommandService {
-  constructor(private readonly roles: PlayerRoleStore, private readonly execute: (action: BotAction) => PlayerCommandResult) {}
+  constructor(private readonly roles: PlayerRoleStore, private readonly execute: (action: BotAction, actor: CommandActor) => PlayerCommandResult) {}
+
+  authorizeExcavation(actor: CommandActor, stopOthers = false): PlayerCommandResult {
+    if (actor.kind === 'deployment') return { ok: true };
+    if (!normalizePlayerName(actor.username) || actor.username !== actor.username.trim()) return { ok: false, error: 'Invalid Minecraft player name.' };
+    return authorizePlayer(this.roles.roleFor(actor.username), stopOthers ? 'task.stop' : 'task.excavate.start');
+  }
 
   submit(actor: CommandActor, input: unknown): PlayerCommandResult {
     if (!validBotAction(input)) return { ok: false, error: 'Invalid task command or parameters.' };
@@ -32,6 +38,6 @@ export class BotCommandService {
     } else if (actor.kind !== 'deployment') return { ok: false, error: 'Unknown command actor.' };
     // Synchronous today: a committed role edit cannot interleave check and dispatch.
     // Execution does not reauthorize or cancel existing work on subsequent role edits.
-    return this.execute(input.type === 'guard' ? { ...input, type: 'protect' } : input);
+    return this.execute(input.type === 'guard' ? { ...input, type: 'protect' } : input, actor);
   }
 }

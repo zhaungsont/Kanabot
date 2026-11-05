@@ -43,6 +43,21 @@ export class EquipmentService {
       if (Number.isFinite(bareHandTime) && (!best || bareHandTime < best.time)) return 'empty';
       return best?.item ?? null;
     });
+    this.resolvers.set('excavation', (requirement, items) => {
+      const p = requirement.context?.position;
+      const block = p && bot.blockAt(new Vec3(p.x, p.y, p.z));
+      if (!block || !block.diggable) return null;
+      // Version-specific material multipliers select shovel/pickaxe/axe (and
+      // hoes/shears where appropriate); harvestTools/canHarvest enforce tier.
+      const multipliers = bot.registry.materials[block.material ?? ''] ?? {};
+      const preferred = Object.values(multipliers).some(n => Number(n) > 1);
+      const candidates = items.filter(i => this.usable(i) && block.canHarvest(i.type) && (!preferred || Number(multipliers[i.type]) > 1));
+      const best = candidates.map(item => ({ item, time: this.digTime(block, item) }))
+        .filter(v => Number.isFinite(v.time)).sort((a, b) => a.time - b.time || a.item.slot - b.item.slot)[0];
+      if (preferred || block.harvestTools) return best?.item ?? null;
+      // A genuinely hand-harvestable material with no preferred tool is allowed.
+      return block.canHarvest(null) && Number.isFinite(this.digTime(block, null)) ? 'empty' : best?.item ?? null;
+    });
   }
   get busy(): boolean { return this.pending > 0; }
   registerPolicy(id: string, resolver: Resolver): void {

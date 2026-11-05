@@ -12,6 +12,8 @@ import { ExcavateTask } from '../src/tasks/excavateTask.js';
 import { IdleBehaviors } from '../src/behaviors/idleBehaviors.js';
 import { defaultBehaviors } from '../src/behaviors/settings.js';
 import { registerSessionHandlers } from '../src/sessions/sessionHandlers.js';
+import { excavationWorld } from './excavationFixtures.js';
+import { Vec3 } from 'vec3';
 import { fakeBot, fakeSession, flush } from './playerFixtures.js';
 
 function clock(t: TestContext) {
@@ -209,18 +211,18 @@ test('both toggles off prevent mutation, open windows defer upkeep, and inventor
   finish(); await Promise.all([one, two]); assert.equal(second, true);
 });
 function excavationFixture() {
-  const f = fixture(); const { bot } = f;
-  const block = { name: 'stone', diggable: true, digTime: () => 100, position: bot.entity.position } as unknown as NonNullable<ReturnType<typeof bot.blockAt>>;
-  let present = true, digs = 0, completed = 0, aborted = 0;
-  bot.blockAt = () => present ? block : { ...block, name: 'air' }; bot.canDigBlock = () => true; bot.pathfinder.goto = async () => {};
-  bot.dig = async () => { digs++; present = false; };
+  const f = fixture(); const { bot } = f; const w = excavationWorld(bot);
+  const pick = w.item('iron_pickaxe'); f.slots[36] = pick; Object.assign(bot, { heldItem: pick });
+  const target = new Vec3(0, 64, 0); w.set(target, 'stone');
+  let digs = 0, completed = 0, aborted = 0;
+  bot.dig = async () => { digs++; w.incoming(target, 'air'); };
   const callbacks = { onEvent() {}, onProgress() {} };
-  return { ...f, callbacks, record: (status: string) => { if (status === 'completed') completed++; else aborted++; }, remove: () => { present = false; }, digs: () => digs, completed: () => completed, aborted: () => aborted };
+  return { ...f, weapon: pick, callbacks, record: (status: string) => { if (status === 'completed') completed++; else aborted++; }, remove: () => w.set(target, 'air'), digs: () => digs, completed: () => completed, aborted: () => aborted };
 }
 const region = { x1: 0, y1: 64, z1: 0, x2: 0, y2: 64, z2: 0 };
 for (const boundary of ['navigation', 'equipment', 'digging'] as const) test(`excavation Stop during final ${boundary} drains with one terminal callback`, async () => {
   const f = excavationFixture(); let finish!: () => void, lateDigs = 0; const task = new ExcavateTask(f.bot, region, f.callbacks, f.equipment);
-  if (boundary === 'navigation') f.bot.pathfinder.goto = () => new Promise<void>(r => { finish = r; });
+  if (boundary === 'navigation') { Object.assign(f.bot.entity, { position: new Vec3(-8.5, 64, .5) }); f.bot.pathfinder.goto = () => new Promise<void>(r => { finish = r; }); }
   if (boundary === 'equipment') { f.bot.equip = () => new Promise<void>(r => { finish = r; }); Object.assign(f.bot, { heldItem: null }); }
   if (boundary === 'digging') f.bot.dig = () => new Promise<void>(r => { finish = r; }); else f.bot.dig = async () => { lateDigs++; };
   const running = task.start();
@@ -229,7 +231,8 @@ for (const boundary of ['navigation', 'equipment', 'digging'] as const) test(`ex
 });
 test('excavation yields before digging and refreshes a removed block requirement after eating', async t => {
   const c = clock(t); const f = excavationFixture(); let arrive!: () => void;
-  f.bot.pathfinder.goto = () => new Promise<void>(r => { arrive = r; }); const task = new ExcavateTask(f.bot, region, f.callbacks, f.equipment);
+  Object.assign(f.bot.entity, { position: new Vec3(-8.5, 64, .5) }); const go = f.bot.pathfinder.goto; let first = true;
+  f.bot.pathfinder.goto = async goal => { if (first) { first = false; await new Promise<void>(r => { arrive = r; }); } await go(goal); }; const task = new ExcavateTask(f.bot, region, f.callbacks, f.equipment);
   const running = task.start();
   void task.completion.then(outcome => f.record(outcome.status)); await flush();
   const runtime = new Upkeep(f.bot, { autoEat: true, autoArmor: false }, f.equipment, () => task.active ? task : null, () => true, () => {}, () => {},

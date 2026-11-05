@@ -55,6 +55,11 @@ export function registerSessionHandlers(socket: AppSocket, manager: BotManager):
     else if (action.type === 'stop') session.performAction('stop');
     else session.performAction(action.type, action.target);
   });
+  socket.on('bot:excavation', (id, request, callback) => {
+    if (typeof callback !== 'function') return;
+    const session = manager.getSessionForViewer(socket.id, id);
+    callback(session ? session.performExcavation(request) : { ok: false, error: 'Attach to this bot before controlling excavation.' });
+  });
   socket.on('bot:unequip', (id, slot) => {
     const session = manager.getSessionForViewer(socket.id, id);
     if (!session) return;

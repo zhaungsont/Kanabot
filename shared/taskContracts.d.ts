@@ -5,7 +5,10 @@ export interface ExcavationSummary {
   alreadyClear: number;
   skipped: number;
   failed: number;
+  unverified: number;
   unvisited: number;
+  reasonCounts?: Record<string, number>;
+  returnedToStaging?: boolean;
 }
 export interface TaskOutcome {
   status: 'completed' | 'partial' | 'stopped' | 'failed';

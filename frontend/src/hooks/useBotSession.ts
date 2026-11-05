@@ -3,9 +3,10 @@ import { io, type Socket } from 'socket.io-client';
 import { usePlayerList } from './usePlayerList';
 import { usePlayerRoles } from './usePlayerRoles';
 import { createSessionHandle, SessionHandleStore } from '../services/sessionHandleStore';
-import type { BotSessionInfo, BotSessionHandle, BotSessionSnapshot, SessionResult, ChatMessage, EventLogEntry, BotConfig, BotAction, ExcavateRegion, ArmorSlot, ArmorSlotId } from '../types';
+import type { BotSessionInfo, BotSessionHandle, BotSessionSnapshot, SessionResult, ChatMessage, EventLogEntry, BotConfig, BotAction, ArmorSlot, ArmorSlotId } from '../types';
 import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/socketContracts.js';
 import type { BehaviorSettings } from '../../../shared/behaviorContracts.js';
+import type { ExcavationRequest, ExcavationResult } from '../../../shared/excavationContracts.js';
 import type { UpkeepSettings } from '../../../shared/upkeepContracts.js';
 
 const BACKEND_URL = import.meta.env['VITE_BACKEND_URL'] ?? 'http://localhost:3001';
@@ -153,7 +154,16 @@ export function useBotSession() {
   const performAction = useCallback((action: BotAction) => {
     if (socketRef.current?.connected && handleRef.current) socketRef.current.emit('bot:action', handleRef.current.sessionId, action);
   }, []);
-  const excavate = useCallback((region: ExcavateRegion) => performAction({ type: 'excavate', region }), [performAction]);
+  const excavate = useCallback((request: ExcavationRequest): Promise<ExcavationResult> => {
+    const socket = socketRef.current, saved = handleRef.current;
+    if (!socket?.connected || !saved) return Promise.resolve({ ok: false, error: 'Reconnect to control excavation.' });
+    return new Promise(resolve => {
+      socket.timeout(5_000).emit('bot:excavation', saved.sessionId, request, (error: Error | null, result?: ExcavationResult) => {
+        if (socketRef.current !== socket || handleRef.current?.sessionId !== saved.sessionId || error || !result) resolve({ ok: false, error: 'Request was not acknowledged. Reconnect and check the plan/task before retrying.' });
+        else resolve(result);
+      });
+    });
+  }, []);
   const unequipArmor = useCallback((slot: ArmorSlotId) => {
     if (socketRef.current?.connected && handleRef.current) socketRef.current.emit('bot:unequip', handleRef.current.sessionId, slot);
   }, []);

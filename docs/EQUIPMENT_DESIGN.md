@@ -8,7 +8,7 @@ Status: **implemented foundation**, 2026-11-05. This supersedes the original rea
 
 - `exclusive(work)` serializes inventory mutation until each promise actually settles. Failure does not abandon pending work or poison later queue entries.
 - `EquipmentIntent.publish(requirement)` increments its revision. Requirements are unrestricted, empty, specific item, or best under a named registered policy and optional block position.
-- `restore(owner, signal)` enters the lane; `reconcile(owner, fallback, signal)` is used while already holding it. Resolve current inventory, equip, read back, compare revision after awaits, and replan at most three times. A missing required item blocks readiness. Mining explicitly permits finite bare-hand selection; this is a policy result, not an arbitrary fallback.
+- `restore(owner, signal)` enters the lane; `reconcile(owner, fallback, signal)` is used while already holding it. Resolve current inventory, equip, read back, compare revision after awaits, and replan at most three times. A missing required item blocks readiness. The generic mining policy permits finite bare-hand selection; the excavation policy requires the version-specific preferred tool and harvest tier, permitting hands only for hand-harvestable materials without a preferred tool.
 - `registerPolicy(id, resolver)` adds a pure selection policy without editing Auto-eat. Duplicate identifiers are rejected. Future tasks implement the owner/yield contract and publish their own requirement.
 - `armor(owner, signal)` runs under the same lane, considers only four armor destinations, excludes held/reserved source items and protected manual slots, awaits equip and verifies destination identity.
 
@@ -19,7 +19,8 @@ EquipmentOwner identity and cancellation belong to the current in-process execut
 | Policy | Delivered ranking | Limits |
 | --- | --- | --- |
 | `melee` | Usable sword/axe; material tier wooden/golden/stone/iron/diamond/netherite, sword preference, small Sharpness weight, stable slot order | Explicit heuristic, not universal DPS, enchantment or custom-server combat optimization |
-| `mining` | Current block's `digTime(item.type, ..., item.enchants, bot.entity.effects)`, finite bare-hand time, usable durability and stable slot order | Preserves excavation's non-harvest-required scope; does not obtain missing tools or guarantee loot |
+| `excavation` | Version-specific material multipliers, `canHarvest`, usable durability, finite digTime, stable slot order | Requires preferred shovel/pickaxe/axe/etc. and harvest tier; missing gear blocks work. No resupply or loot guarantee |
+| `mining` | Current block's `digTime(item.type, ..., item.enchants, bot.entity.effects)`, finite bare-hand time, usable durability and stable slot order | Generic policy retained for callers; not the active excavation policy |
 | Armor | Usable helmet/chestplate/leggings/boots; material tier leather/golden/chainmail/iron/diamond/netherite, Protection weight | No situational enchantment, Elytra/offhand or custom-armor optimization; only strictly better scored replacements |
 
 Item comparison uses type, metadata, NBT and components, with current reference preferred. Original slot is only a tie preference. Identical copies are interchangeable. An empty-hand requirement switches to a checked empty hotbar slot and fails if none exists; it never uses a drop-capable hand unequip fallback. [Mineflayer equip implementation](https://github.com/PrismarineJS/mineflayer/blob/master/lib/plugins/simple_inventory.js), [Prismarine Item fields](https://github.com/PrismarineJS/prismarine-item/blob/master/index.d.ts)

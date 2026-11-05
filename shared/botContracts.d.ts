@@ -27,6 +27,8 @@ export interface BotSessionInfo {
   upkeep?: import('./upkeepContracts.js').UpkeepStatus;
   taskLifecycle?: import('./taskContracts.js').TaskLifecycleStatus;
   lastTaskOutcome?: import('./taskContracts.js').TaskOutcome;
+  excavationPlan?: import('./excavationContracts.js').ExcavationPlan;
+  excavationStatus?: import('./excavationContracts.js').ExcavationStatus;
 }
 export interface ChatMessage {
   username: string; message: string; timestamp: number; isBot?: boolean;

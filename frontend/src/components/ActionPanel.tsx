@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { BotSessionInfo, BotAction, ExcavateRegion } from '../types';
+import { BotSessionInfo, BotAction } from '../types';
+import ExcavationPanel from './ExcavationPanel';
+import type { ExcavationRequest, ExcavationResult } from '../../../shared/excavationContracts.js';
 
 interface ActionPanelProps {
   botInfo: BotSessionInfo;
   onAction: (action: BotAction) => void;
-  onExcavate: (region: ExcavateRegion) => void;
+  onExcavate: (request: ExcavationRequest) => Promise<ExcavationResult>;
 }
 
 function useUptime(spawnedAt: string | null): string {
@@ -33,36 +35,9 @@ const TASK_ICON: Record<string, string> = {
   attack: '⚔',
 };
 
-function CoordInput({
-  label,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  disabled: boolean;
-}) {
-  return (
-    <label style={styles.coordLabel}>
-      <span style={styles.coordAxisLabel}>{label}</span>
-      <input
-        style={styles.coordInput}
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        placeholder="0"
-      />
-    </label>
-  );
-}
-
 export default function ActionPanel({ botInfo, onAction, onExcavate }: ActionPanelProps) {
   const [followTarget, setFollowTarget] = useState('');
   const [protectTarget, setProtectTarget] = useState('');
-  const [dig, setDig] = useState({ x1: '', y1: '', z1: '', x2: '', y2: '', z2: '' });
   const uptime = useUptime(botInfo.spawnedAt);
 
   const isIdle = botInfo.state === 'idle';
@@ -76,15 +51,6 @@ export default function ActionPanel({ botInfo, onAction, onExcavate }: ActionPan
   const handleProtect = () => {
     if (!protectTarget.trim()) return;
     onAction({ type: 'protect', target: protectTarget.trim() });
-  };
-
-  const digCoords = [dig.x1, dig.y1, dig.z1, dig.x2, dig.y2, dig.z2].map(Number);
-  const digValid = digCoords.every((n) => !isNaN(n)) && [dig.x1, dig.y1, dig.z1, dig.x2, dig.y2, dig.z2].every((s) => s !== '');
-
-  const handleExcavate = () => {
-    if (!digValid) return;
-    const [x1, y1, z1, x2, y2, z2] = digCoords as [number, number, number, number, number, number];
-    onExcavate({ x1, y1, z1, x2, y2, z2 });
   };
 
   return (
@@ -176,29 +142,7 @@ export default function ActionPanel({ botInfo, onAction, onExcavate }: ActionPan
           </button>
         </div>
 
-        {/* Excavate */}
-        <div style={styles.excavateGroup}>
-          <span style={styles.excavateTitle}>⛏ Excavate Region</span>
-          <div style={styles.coordRow}>
-            <span style={styles.coordCornerLabel}>From</span>
-            <CoordInput label="X" value={dig.x1} onChange={(v) => setDig((d) => ({ ...d, x1: v }))} disabled={!isIdle} />
-            <CoordInput label="Y" value={dig.y1} onChange={(v) => setDig((d) => ({ ...d, y1: v }))} disabled={!isIdle} />
-            <CoordInput label="Z" value={dig.z1} onChange={(v) => setDig((d) => ({ ...d, z1: v }))} disabled={!isIdle} />
-          </div>
-          <div style={styles.coordRow}>
-            <span style={styles.coordCornerLabel}>To</span>
-            <CoordInput label="X" value={dig.x2} onChange={(v) => setDig((d) => ({ ...d, x2: v }))} disabled={!isIdle} />
-            <CoordInput label="Y" value={dig.y2} onChange={(v) => setDig((d) => ({ ...d, y2: v }))} disabled={!isIdle} />
-            <CoordInput label="Z" value={dig.z2} onChange={(v) => setDig((d) => ({ ...d, z2: v }))} disabled={!isIdle} />
-          </div>
-          <button
-            style={{ ...styles.actionBtn, background: '#8B4513', color: '#fff', alignSelf: 'flex-start', marginTop: '0.25rem' }}
-            onClick={handleExcavate}
-            disabled={!isIdle || !digValid}
-          >
-            Start Excavation
-          </button>
-        </div>
+        <ExcavationPanel botInfo={botInfo} request={onExcavate} />
 
         {/* Stop button */}
         {isInTask && (

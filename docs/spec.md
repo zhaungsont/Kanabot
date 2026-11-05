@@ -86,6 +86,7 @@ Deployment lifetime controls live above the action panel. Disconnect Bot is enab
 - Available when bot state is `idle` or `task`
 - **Follow** button: text input for player name → `bot:action { type: 'follow', target }`
 - **Protect** button: text input for player name → `bot:action { type: 'protect', target }`; renders backend phase/threat/readiness status
+- **Excavation**: origin/directional-size inputs → preview → explicit confirmation; displays bounds, observed/unknown counts, expiry and scoped task status/stop.
 - **Stop** button: `bot:action { type: 'stop' }` — only shown when bot is in `task` state
 - Buttons disabled when bot is in `spawning` or `dead` state
 
@@ -128,7 +129,7 @@ Deployment lifetime controls live above the action panel. Disconnect Bot is enab
 - `backend/src/access/roleCatalog.ts` defines fixed inherited role grants; `backend/src/commands/taskPermissions.ts` maps operations to permission IDs. `shared/accessContracts.d.ts` defines wire shapes. Assignment maps/revisions live in each BotSession's `PlayerRoleStore`, surviving viewer reconnect but not retirement/backend restart.
 - `BotCommandService` validates and authorizes new Minecraft commands before execution. Existing task state is unaffected by assignment changes. There are no task requester/initiator checks or role-driven preemption in RBAC.
 - `bot:access:get` and `bot:access:update` require an attached deployment viewer. Updates include username, role (or null), and expected revision; stale revisions return `CONFLICT`. `bot:access` broadcasts updated snapshots to attached viewers. Resume snapshots include access state.
-- The role hook/panel does not enable live roster sampling. Permission descriptions come from the backend. Exact chat commands include `!follow`, `!protect` (`!guard` alias), `!attack`, `!stop`, and `!dig`/`!excavate` with six validated integer coordinates.
+- The role hook/panel does not enable live roster sampling. Permission descriptions come from the backend. Exact chat commands include `!follow`, `!protect` (`!guard` alias), `!attack`, `!stop`, and `!dig`/`!excavate` with an explicit origin and directional sizes, followed by confirmation. Excavation commands also work through tell; feedback stays private.
 - See [BOT_OWNERSHIP_DESIGN.md](BOT_OWNERSHIP_DESIGN.md) for scope, identity limits, module boundaries, and test instructions.
 
 #### AdBanner
@@ -172,7 +173,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 - mineflayer-pathfinder for bot movement
 - mineflayer-pvp for combat (Protect and Attack)
 - Shared EquipmentService for opt-in armor upkeep; armor-manager remains installed but is not loaded
-- Shared mining resolver using current block digTime, including bare hands, for excavation; the tool plugin remains installed/loaded but is not the active excavation selector
+- Shared excavation resolver using version-specific material multipliers, harvest tier, durability and current block digTime; missing preferred tools block excavation; the tool plugin remains installed/loaded but is not the active excavation selector
 
 ### 4.2 Socket.IO Events
 
@@ -186,6 +187,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 | `bot:resume` | `BotSessionHandle, callback(SessionResult<BotSessionSnapshot>)` | Authorize a new viewer and return current state, armor, and bounded history |
 | `bot:disconnect` | `sessionId, callback(SessionResult<null>)` | Explicitly stop and retire the attached bot for all viewers |
 | `bot:chat` | `sessionId: string, message: string` | Send chat to game |
+| `bot:excavation` | `sessionId, ExcavationRequest, callback` | Acknowledged prepare/confirm/preview/cancel/status/stop; requires authorized attachment |
 | `bot:action` | `sessionId: string, action: BotAction` | Issue a task or stop |
 | `bot:players:subscribe` | `sessionId, enabled, callback(result)` | Enable/disable the owned session's roster stream |
 | `bot:playerAction` | `sessionId, { type: 'follow' \| 'attack' \| 'whisper', target, message? }, callback(result)` | Validated player command; whispers require a message |
@@ -280,21 +282,27 @@ Task/manual requests cancel and return a retry explanation during cleanup; they 
 
 #### Excavate
 
-The current implementation is described below. [EXCAVATION_DESIGN.md](EXCAVATION_DESIGN.md) reviews its remaining defects and specifies the next one-coordinate-plus-directional-sizes release with private preparation/confirmation and access-aware execution. Look-at-two-corners input is future work; other selection options have been discarded. Those commands and adapters are not implemented; inbound whispers currently mirror messages without dispatching tasks.
+The first release implements **one coordinate plus directional sizes**, read-only preview, confirmation and issuer-owned cancellation. See [EXCAVATION_DESIGN.md](EXCAVATION_DESIGN.md#implemented-first-release) for the execution boundary and API evidence. Look at two corners remains future input; other selection options are discarded.
 
-- Command (in-game chat): `!dig <x1> <y1> <z1> <x2> <y2> <z2>` — two absolute corner coordinates
-- Also triggerable from frontend ActionPanel via `bot:action { type: 'excavate', region }`
-- Implementation: `ExcavateTask` class in `backend/src/tasks/excavateTask.ts`
-- Algorithm:
-  1. Normalise coordinates (min/max on each axis)
-  2. Reject if total block count exceeds **10,000** (hard safety limit)
-  3. Build ordered dig list: Y layers top-down, zigzag XZ within each layer
-  4. For each block: navigate within 3 blocks via pathfinder, reconcile the current mining requirement through EquipmentService, then call `bot.dig()`
-  5. Loaded air is counted as already clear; non-diggable blocks such as bedrock/barrier are skipped
-  6. Include bare hands when dig time is finite. Empty-hand selection verifies an empty hotbar slot; it never drops an item to make room
-  7. Progress milestones at every 10% are emitted to EventLog
-  8. Report total/dug/already-clear/skipped/failed/unvisited counts. Unloaded or non-diggable positions are skipped; navigation/equipment/dig failures are counted. A traversal with skips/failures reports partial completion, not success. Only full completion sends `"Excavation complete!"`
-- Cancellation: `!stop` or Stop Task aborts owned work, requests active navigation/digging cancellation, checks application-level asynchronous boundaries, and drains cleanup before releasing the shared task lease. Failed cancellation retains ownership; a stopped traversal reports unvisited positions. A deliberately delayed internal look can start digging after Stop in a failure-injection fixture; reproduction with stock forced-look timing remains unverified. This conditional gap is tracked in [KI-002](KNOWN_ISSUES.md#ki-002--excavation-cancellation-can-dig-after-stop-and-retain-a-stale-task)
+```text
+/tell mc_bot !dig from 120 64 -30 east 8 south 6 down 4
+/tell mc_bot !dig confirm <planId>
+/tell mc_bot !dig status <taskId>
+/tell mc_bot !dig stop <taskId>
+```
+
+- Sizes include the origin; omitted axes contain one block. Above example covers X120..127, Y61..64, Z-30..-25 (192 positions). Signed decimal coordinates and positive decimal sizes only; one pair per axis. `!dig help`, `preview` and `cancel` are supported. Public chat uses the same grammar, with private feedback.
+- Crew/Owner may prepare/confirm. Confirmation rechecks current permission, issuer, connection/dimension, unchanged staging cell, expiry and idle admission. Plans expire after 120 seconds; history is bounded to 16 plans/tasks in memory. Repeated confirmation returns the accepted task without rerunning it. The recorded initiator may stop their own excavation after demotion; Owner/deployment authority may stop another. General `!stop` permissions are unchanged.
+- Dashboard origin/direction/size fields use acknowledged `bot:excavation` prepare/confirm/cancel/status/stop requests. Snapshot/resume includes the deployment's pending plan and latest compact task status. Legacy six-coordinate **wire** actions prepare only; they cannot bypass confirmation. The old six-coordinate chat grammar is removed.
+- Product policies: 10,000 positions total, 128 per axis, dimension Y bounds, target box within 32 blocks at preparation, movement within 32 blocks of task staging. A million-position request is rejected before allocation or movement. These are Kanabot policies, not Mineflayer limits.
+- Execution stays on **flat, full-block, known stable external terrain at staging Y**. It never enters the removal volume, breaks/places while navigating, constructs ramps, swims, jumps or descends. A bounded external walkway graph (4,096 cells) validates retreat; top-down snake order breaks ties only. Up to three passes defer obstructed cells. Jobs needing deeper access produce partial results.
+- Every destructive step rechecks loaded target/halo, support, external retreat, face/ray coverage, reach and equipment after asynchronous handoffs. Fluids/waterlogging, gravity exposure, block entities/containers, occupied cells and unsupported shapes are conservatively blocked. Missing data stays unknown; this release has no remote chunk loader or progressive survey. Natural nearby arrivals can be used on later checks.
+- EquipmentService's shared inventory lane selects version-appropriate preferred tools (shovel, pickaxe, axe, etc.), enforces harvest tier and usable durability, equips and verifies the held item. Bare hands are allowed only for materials without a preferred tool that can be hand-harvested. Missing preferred gear reports `TOOL_UNAVAILABLE` rather than silently mining slowly.
+- `bot.dig(block, true, faceVector)` performs its own orientation. No extra application look is required. The internal look boundary is guarded against cancellation and stale safety conditions. Arrival is checked independently of `goto()` resolution. Navigation has a 15-second cancellation deadline, dig 30 seconds, job 15 minutes. Deadlines request Stop and retain the task lease until the operation drains.
+- Dig completion is separate from incoming `block_change`/`multi_block_change` evidence. Missing evidence after 1.5 seconds is unverified, never blindly retried; uncertain local air stays unknown across later jobs on that connection. Fresh incoming updates observed by an active excavation can clear that uncertainty; reconnecting creates new world knowledge. A final 250ms stabilization window and scan detect ordinary rollback, without promising permanent emptiness.
+- Outcomes report total/verified-dug/already-clear/blocked-or-unknown/failed/unverified/unvisited, bounded reason counts and return-to-staging status. Counts sum to volume. Completed requires every position clear and verified arrival back at staging. Stop/death/end/world change drains owned work/listeners/timers/settings and does not start a return journey. Unconfirmed cleanup blocks successors. Progress snapshots are throttled to five seconds; milestone logs and one private terminal result remain available.
+
+Verification uses simulated worlds, installed digging/pathfinder boundaries and mocked server packets; supported live server behavior, anti-cheat/protection and capacity still require gameplay acceptance.
 
 #### Basic Greeting
 

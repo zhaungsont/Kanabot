@@ -1,6 +1,47 @@
 # Excavation: one coordinate plus directional sizes
 
-Status: **design for the next implementation phase; no implementation delivered**. Revised 2026-11-05. This replaces the earlier multi-option proposal. Current runtime behavior remains in [spec.md](spec.md); lifecycle foundations remain in [TASK_LIFECYCLE.md](TASK_LIFECYCLE.md).
+Status: **first external-stance release implemented**, 2026-11-05. The approved implementation narrows the broader research below. Current behavior is in [spec.md](spec.md#excavate); lifecycle foundations remain in [TASK_LIFECYCLE.md](TASK_LIFECYCLE.md).
+
+## Implemented first release
+
+The current implementation supports coordinate-plus-sizes, read-only preview/confirmation, scoped cancellation and private feedback from public chat/tell/dashboard. Geometry and command parsing live in `backend/src/excavation/region.ts` and `commands.ts`; `service.ts` owns bounded issuer plans/history and admission, `world.ts` owns the external walkway model/ray coverage/server evidence, and `tasks/excavateTask.ts` owns sequential execution and cleanup. Shared JSON contracts live in `shared/excavationContracts.d.ts`; the existing EquipmentService owns hand selection/equipping and Upkeep coordination.
+
+**Implemented limits:** 10,000 positions, 128 per axis, actual dimension height, preparation within 32 blocks of the box, flat full-block external walking within 32 blocks of staging, 4,096 graph cells, four stance candidates per target, three passes, 15-second navigation / 30-second dig / 15-minute job cancellation deadlines. No pit entry, access construction, automatic descent, progressive frontier survey, remote chunk loading or loot collection is implemented. Unknown/inaccessible cells remain incomplete. These limits deliberately replace the access-support/retreat-removal algorithm proposed in sections 6–7 for this release. They are product policy, not a claim that Mineflayer cannot perform deeper jobs.
+
+A candidate requires a loaded nonhazardous target/halo, exposed full-block face with exact voxel ray coverage, supported external stance, modeled external retreat, current equipment and reach. Rechecks occur after navigation/equipment/upkeep and inside the existing dig look await. `dig(block, true, faceVector)` uses a **Vec3 face normal**, not a numeric face ID; it handles orientation internally. Movement uses a fresh constrained `Movements`, `GoalBlock` and actual-arrival checks. Original settings are restored only after owned work drains.
+
+Equipment's `excavation` policy uses the connected version's `registry.materials[block.material]`, `block.canHarvest`, durability and digTime. It selects shovel/pickaxe/axe/other preferred tools rather than a hardcoded list of block names, refuses a missing preferred tool and permits bare hands only when there is no preferred material tool and hand harvesting is valid. No task-specific branch was added to food upkeep.
+
+Incoming block packets provide attempt evidence; local optimistic world events do not. Missing evidence yields unverified work and is retained as unknown for later jobs on the captured connection, preventing a second job from blessing optimistic local air. This bounded conservative uncertainty ledger has no background listeners; fresh incoming updates during an active excavation or a fresh connection can restore knowledge. Full chunk receipts and passive re-observation of uncertain cells remain future work. Final stabilization is 250ms, followed by a scan. It detects ordinary observed rollback; later world changes remain possible.
+
+```mermaid
+flowchart TD
+    A[Origin plus directional sizes] --> B[Validate current start authority, bounds, Y, proximity and policy limits]
+    B --> C[Read cached knowledge only; freeze issuer plan for 120 seconds]
+    C --> D{Confirm matching issuer and plan?}
+    D -->|Cancel or expire| X[Discard without movement]
+    D -->|Yes| E[Recheck authority, connection, dimension and idle admission; consume once]
+    E --> F[Claim task lease; validate staging outside region; install non-destructive movement policy]
+    F --> G[Choose top-down candidate; re-read target and loaded safety halo]
+    G --> H{Safe external stance, face and retreat?}
+    H -->|No| I[Defer or record blocked/unknown; at most three passes]
+    H -->|Yes| J[Navigate to GoalBlock; verify arrival; reconcile preferred tool through EquipmentService]
+    J --> K[Recheck live world, held requirement, reach and cancellation]
+    K --> L[One owned dig with forced internal orientation and guarded preparation]
+    L --> M[Observe incoming server update for at most 1.5 seconds; no blind replay]
+    M --> N{More bounded work?}
+    I --> N
+    N -->|Yes| G
+    N -->|No| O[Attempt external return to staging; stabilize; scan and classify every cell]
+    P[Stop, death, end, world change or deadline] --> Q[Invalidate new work; cancel navigation/active dig; drain owned operations]
+    O --> R[Remove listeners/timers; restore settings; publish honest result]
+    Q --> R
+    R --> S{Cleanup confirmed?}
+    S -->|Yes| T[Release lease; preserve dead/disconnected state]
+    S -->|No| U[Visible cleanup failure; block successors until retirement]
+```
+
+The remaining sections preserve research and the broader proposed executor. References to progressive observation, reserved access supports or hypothetical terrain simulation **are not implemented guarantees**. Look at two corners remains the only future selection input. Installed-library/simulated regressions cover cancellation, non-destructive path generation, false arrival, geometry/authority, preferred tools, world changes, uncertain receipts and maximum mostly-air accounting. No live-server acceptance has been performed.
 
 ## 1. Release decision
 
@@ -84,11 +125,11 @@ Counts are illustrative. Preview separates known/unknown positions, prospective 
 | `!dig status <taskId>` | Return phase, current layer, clear/unknown/remaining counts and reason. |
 | `!dig stop <taskId>` | Cancel the initiating player's own excavation; Owner/deployment authority may cancel another according to authorization policy. |
 
-These are proposed commands. Current inbound whispers only mirror messages and need dispatch support. Public chat may use the same exact grammar; feedback defaults to bounded one-line private messages through the existing whisper helper, with no public fallback. Mirror them privately in the dashboard. Send acceptance, significant phase changes, progress at most every five seconds, and one terminal result.
+These command forms are implemented in the bounded first release. Inbound whispers and public chat use the same exact parser; feedback defaults to bounded one-line private messages through the existing whisper helper, with no public fallback. Mirror them privately in the dashboard. Send acceptance, significant phase changes, progress at most every five seconds, and one terminal result.
 
 Crew/Owner retain start permission. The initiating actor/task ID must be recorded by the backend because current Crew can start excavation but cannot use Owner-only general `!stop`. Own-excavation cancellation is a new explicit ownership policy, including after role demotion; it does not give Crew general control of other tasks. `!stop` retains its current policy.
 
-The dashboard uses the same prepare/confirm service, with coordinate and named-size fields. For migration, old six-coordinate requests may normalize through the same factory as a compatibility adapter; they must not bypass confirmation. They are not a second selection workflow to extend. Current behavior does not change until implementation and a coordinated client/protocol update.
+The dashboard uses the same prepare/confirm service, with coordinate and named-size fields. For migration, old six-coordinate requests may normalize through the same factory as a compatibility adapter; they must not bypass confirmation. They are not a second selection workflow to extend. The first release updates the client/protocol together; legacy wire actions now prepare without starting execution.
 
 ## 4. Initial request to completion
 

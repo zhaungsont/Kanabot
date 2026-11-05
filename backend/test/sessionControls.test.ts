@@ -37,3 +37,12 @@ test('retirement waits for an authorized attachment and a connected viewer', () 
     assert.match(html, /<button disabled="">Disconnect Bot<\/button>/);
   }
 });
+
+test('dashboard excavation presents origin and sizes with an explicit preview step', () => {
+  const html = renderToStaticMarkup(createElement(ActionPanel, {
+    botInfo: { sessionId: 'session', config: { serverHost: 'example.test', botName: 'mc_bot' }, state: 'idle', currentTask: null, taskTarget: null, spawnedAt: null, uptime: 0 },
+    onAction() {}, onExcavate() {},
+  }));
+  assert.match(html, /Origin X/); assert.match(html, /east size/); assert.match(html, /Preview excavation/);
+  assert.doesNotMatch(html, /Start Excavation/); assert.match(html, /Sizes include the origin/);
+});

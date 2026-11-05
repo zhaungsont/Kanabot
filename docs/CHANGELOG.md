@@ -8,6 +8,14 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### External-stance excavation release — 2026-11-05
+
+- Implemented one explicit origin plus directional sizes in chat/tell and dashboard, with read-only previews, 120-second issuer-bound confirmation, idempotent acceptance, scoped stop/status and bounded in-memory history. Legacy coordinate wire actions prepare only; old six-coordinate chat syntax is removed.
+- Added conservative flat external walking, verified arrival/retreat, scoped non-destructive pathfinder settings, repeated target/halo/face checks, work deadlines and honest partial/unverified results. No pit entry, ramps, placement or remote survey is included.
+- Added version-data-based preferred tool selection through the shared EquipmentService, including harvest tier/durability and post-upkeep reconciliation. Missing preferred tools are reported explicitly.
+- Guarded installed digging preparation against cancellation; incoming server block evidence and final stabilization distinguish verified removal from optimistic local air, including across subsequent tasks. Added shared excavation request/plan/status contracts and compact resume projections.
+- Added simulated/installed-library regression coverage and updated release boundaries. Live Minecraft compatibility and solid-workload capacity remain unverified.
+
 ### Scoped excavation implementation design — 2026-11-05
 
 - Replaced the earlier option catalog with the one-explicit-coordinate-plus-directional-sizes design. Look at two corners is reserved for a future release; other input options are discarded.

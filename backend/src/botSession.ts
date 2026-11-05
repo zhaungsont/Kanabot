@@ -8,7 +8,10 @@ import { loader as autoEatPlugin } from "mineflayer-auto-eat";
 import { IdleBehaviors } from "./behaviors/idleBehaviors.js";
 import { EquipmentService, type EquipmentOwner } from "./runtime/equipment.js";
 import { Upkeep, defaultUpkeep, validUpkeep } from "./upkeep/upkeep.js";
-import type { UpkeepSettings, UpkeepStatus } from "../../shared/upkeepContracts.js";
+import type {
+	UpkeepSettings,
+	UpkeepStatus,
+} from "../../shared/upkeepContracts.js";
 import {
 	defaultBehaviors,
 	copySettings,
@@ -48,6 +51,9 @@ import { PlayerRoleStore } from "./access/playerRoleStore.js";
 import { normalizePlayerName } from "./access/roleCatalog.js";
 import { BotCommandService } from "./commands/botCommandService.js";
 import { parseMinecraftCommand } from "./commands/minecraftCommand.js";
+import type { CommandActor } from "./commands/botCommandService.js";
+import type { ExcavationResult } from "../../shared/excavationContracts.js";
+import { ExcavationService } from "./excavation/service.js";
 import type { BotAction } from "./types.js";
 import type {
 	PlayerAccessSnapshot,
@@ -94,7 +100,11 @@ export class BotSession {
 	};
 	private idleBehaviors: IdleBehaviors | null = null;
 	private upkeepSettings = defaultUpkeep();
-	private upkeepStatus: UpkeepStatus = { settings: defaultUpkeep(), activity: "monitoring", detail: "Upkeep disabled." };
+	private upkeepStatus: UpkeepStatus = {
+		settings: defaultUpkeep(),
+		activity: "monitoring",
+		detail: "Upkeep disabled.",
+	};
 	private upkeep: Upkeep | null = null;
 	private equipmentService: EquipmentService | null = null;
 	private manualInventoryBusy: symbol | null = null;
@@ -109,6 +119,7 @@ export class BotSession {
 	private readonly callbacks: BotSessionCallbacks;
 	private readonly playerRoles: PlayerRoleStore;
 	private readonly commands: BotCommandService;
+	private readonly excavation: ExcavationService;
 
 	constructor(
 		sessionId: string,
@@ -119,11 +130,39 @@ export class BotSession {
 		this.sessionId = sessionId;
 		this.config = config;
 		this.callbacks = callbacks;
-		this.tasks = new TaskCoordinator(() => { if (!this.destroyed) this.callbacks.onStateChange(); },
-			message => { if (!this.destroyed) this.emitEvent("error", message); });
+		this.tasks = new TaskCoordinator(
+			() => {
+				this.excavation?.lifecycle(this.tasks.status);
+				if (!this.destroyed) this.callbacks.onStateChange();
+			},
+			(message) => {
+				if (!this.destroyed) this.emitEvent("error", message);
+			},
+		);
 		this.playerRoles = new PlayerRoleStore(sessionId);
-		this.commands = new BotCommandService(this.playerRoles, (action) =>
-			this.executeAction(action),
+		this.commands = new BotCommandService(this.playerRoles, (action, actor) =>
+			this.executeAction(action, actor),
+		);
+		this.excavation = new ExcavationService(
+			() =>
+				this.bot &&
+				!this.destroyed &&
+				!this.connectionClosing &&
+				["idle", "task"].includes(this.state)
+					? {
+							bot: this.bot,
+							available:
+								this.state === "idle" &&
+								!this.tasks.busy &&
+								!this.manualInventoryBusy,
+						}
+					: null,
+			(actor, stopOthers) =>
+				this.commands.authorizeExcavation(actor, stopOthers),
+			(region, taskId, actor) =>
+				this.executeAction({ type: "excavate", region }, actor, taskId),
+			() => this.stopTask(),
+			() => this.callbacks.onStateChange(),
 		);
 	}
 
@@ -146,6 +185,8 @@ export class BotSession {
 			protect: this.protectStatus,
 			taskLifecycle: this.tasks.status,
 			lastTaskOutcome: this.lastTaskOutcome,
+			excavationPlan: this.excavation.preview({ kind: "deployment" }),
+			excavationStatus: this.excavation.latest(),
 			upkeep: { ...this.upkeepStatus, settings: { ...this.upkeepSettings } },
 			behaviors: {
 				...this.behaviorStatus,
@@ -205,11 +246,34 @@ export class BotSession {
 		this.idleBehaviors?.dispose();
 		this.upkeep?.dispose();
 		this.equipmentService = new EquipmentService(bot);
-		this.upkeep = new Upkeep(bot, this.upkeepSettings, this.equipmentService, () => this.equipmentOwner(),
-			() => this.bot === bot && !this.destroyed && !this.connectionClosing && ["idle", "task"].includes(this.state) && !this.taskCleanupPending && !this.manualInventoryBusy &&
-				(this.state === "task" ? !!this.equipmentOwner() : !this.idleBehaviors?.busy || !!this.idleBehaviors.runtimeOwner),
-			status => { if (this.bot === bot && !this.destroyed && !this.connectionClosing) { this.upkeepStatus = status; this.callbacks.onStateChange(); } },
-			(message, level = "info") => { if (this.bot === bot && !this.destroyed && !this.connectionClosing) { this.emitEvent(level, message); this.emitArmorUpdate(bot); } });
+		this.upkeep = new Upkeep(
+			bot,
+			this.upkeepSettings,
+			this.equipmentService,
+			() => this.equipmentOwner(),
+			() =>
+				this.bot === bot &&
+				!this.destroyed &&
+				!this.connectionClosing &&
+				["idle", "task"].includes(this.state) &&
+				!this.taskCleanupPending &&
+				!this.manualInventoryBusy &&
+				(this.state === "task"
+					? !!this.equipmentOwner()
+					: !this.idleBehaviors?.busy || !!this.idleBehaviors.runtimeOwner),
+			(status) => {
+				if (this.bot === bot && !this.destroyed && !this.connectionClosing) {
+					this.upkeepStatus = status;
+					this.callbacks.onStateChange();
+				}
+			},
+			(message, level = "info") => {
+				if (this.bot === bot && !this.destroyed && !this.connectionClosing) {
+					this.emitEvent(level, message);
+					this.emitArmorUpdate(bot);
+				}
+			},
+		);
 		this.idleBehaviors = new IdleBehaviors(
 			bot,
 			this.behaviorSettings,
@@ -220,14 +284,17 @@ export class BotSession {
 				this.currentTask === null &&
 				!this.taskCleanupPending &&
 				!this.tasks.busy &&
-				!this.manualInventoryBusy && !this.upkeep?.busy,
+				!this.manualInventoryBusy &&
+				!this.upkeep?.busy,
 			(status) => {
-				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
+				if (this.bot !== bot || this.destroyed || this.connectionClosing)
+					return;
 				this.behaviorStatus = status;
 				this.callbacks.onStateChange();
 			},
 			(message, level = "warning") => {
-				if (this.bot === bot && !this.destroyed && !this.connectionClosing) this.emitEvent(level, message);
+				if (this.bot === bot && !this.destroyed && !this.connectionClosing)
+					this.emitEvent(level, message);
 			},
 		);
 		this.playerRoster?.dispose();
@@ -238,6 +305,7 @@ export class BotSession {
 		});
 
 		bot.on("spawn", () => {
+			if (this.bot === bot) this.excavation.invalidate();
 			// Stale-event guard: skip if this bot has already been replaced or destroyed.
 			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 
@@ -271,6 +339,10 @@ export class BotSession {
 			this.emitArmorUpdate(bot);
 			this.playerRoster?.setSubscribed(this.playersSubscribed);
 		});
+		bot.on("game", () => {
+			if (this.bot === bot && !this.connectionClosing)
+				this.excavation.invalidate();
+		});
 
 		bot.on("entityEquip", (entity: any) => {
 			// console.log('in entityEquip');
@@ -285,7 +357,11 @@ export class BotSession {
 			if (this.bot !== bot || this.connectionClosing) return;
 			try {
 				// Pathfinder/combat owns looking during tasks; passive glances must not fight it.
-				if (this.state === "idle" && !this.idleBehaviors?.busy && !this.upkeep?.busy)
+				if (
+					this.state === "idle" &&
+					!this.idleBehaviors?.busy &&
+					!this.upkeep?.busy
+				)
 					this.lookAtNearestEntity(bot);
 			} catch (err) {
 				if (!this.tickErrorLogged) {
@@ -310,7 +386,8 @@ export class BotSession {
 		bot.on("whisper", (username: string, message: string) => {
 			if (
 				this.bot !== bot ||
-				this.destroyed || this.connectionClosing ||
+				this.destroyed ||
+				this.connectionClosing ||
 				username === this.config.botName
 			)
 				return;
@@ -321,10 +398,13 @@ export class BotSession {
 				channel: "whisper",
 				recipient: this.config.botName,
 			});
+			// Tell uses the same parser and backend authority as public commands.
+			this.handleChatCommands(username, message);
 		});
 
 		bot.on("death", () => {
 			if (this.bot !== bot || this.connectionClosing) return;
+			this.excavation.invalidate();
 			this.stopTask();
 			this.clearIdleTimer();
 			this.setState("dead");
@@ -373,7 +453,12 @@ export class BotSession {
 				if (this.connectionErrorTimer) return;
 				this.connectionErrorTimer = setTimeout(() => {
 					this.connectionErrorTimer = null;
-					if (this.bot === bot && this.state === "spawning" && !this.destroyed && !this.connectionClosing)
+					if (
+						this.bot === bot &&
+						this.state === "spawning" &&
+						!this.destroyed &&
+						!this.connectionClosing
+					)
 						this.handleDisconnect(!this.wasKicked);
 				}, 500);
 			}
@@ -391,8 +476,9 @@ export class BotSession {
 
 	private captureConnection(bot: Bot): BotConnection {
 		if (!this.connection || this.connection.bot !== bot) {
-			this.connection = new BotConnection(bot, message => {
-				if (!this.destroyed && this.bot === bot) this.emitEvent("error", message);
+			this.connection = new BotConnection(bot, (message) => {
+				if (!this.destroyed && this.bot === bot)
+					this.emitEvent("error", message);
 			});
 		}
 		return this.connection;
@@ -406,6 +492,7 @@ export class BotSession {
 	}
 
 	private handleDisconnect(shouldRetry: boolean): void {
+		this.excavation.invalidate();
 		this.clearRetryTimer();
 		this.clearConnectionTimers();
 		if (this.connectionClosing) {
@@ -415,36 +502,57 @@ export class BotSession {
 		this.retryAfterClose = shouldRetry;
 		this.connectionClosing = true;
 		this.stopTask();
-		this.upkeep?.dispose(); this.upkeep = null;
-		this.idleBehaviors?.dispose(); this.idleBehaviors = null;
-		this.playerRoster?.dispose(); this.playerRoster = null;
+		this.upkeep?.dispose();
+		this.upkeep = null;
+		this.idleBehaviors?.dispose();
+		this.idleBehaviors = null;
+		this.playerRoster?.dispose();
+		this.playerRoster = null;
 		this.clearIdleTimer();
 		this.currentTask = null;
 		this.taskTarget = null;
 		this.protectStatus = undefined;
 		this.setState("disconnected");
 		const bot = this.bot;
-		const closed = bot ? this.captureConnection(bot).close() : Promise.resolve();
-		void closed.then(() => {
-			if (this.bot !== bot) return;
-			this.bot = null;
-			this.connection = null;
-			this.connectionClosing = false;
-			if (this.destroyed) return;
-			if (this.retryAfterClose && this.retryCount < MAX_RETRY_ATTEMPTS) {
-				this.retryCount++;
-				const delay = RETRY_DELAY_BASE_MS * this.retryCount;
-				this.emitEvent("info", `Retry ${this.retryCount}/${MAX_RETRY_ATTEMPTS} in ${delay / 1000}s...`);
-				this.retryTimer = setTimeout(() => {
-					this.retryTimer = null;
-					if (!this.destroyed && this.state === "disconnected" && !this.connectionClosing) {
-						this.setState("spawning"); this.createBot();
-					}
-				}, delay);
-			} else if (this.retryCount >= MAX_RETRY_ATTEMPTS) {
-				this.emitEvent("error", "Max retry attempts reached. Session ended."); this.destroy();
-			}
-		}).catch(() => { this.emitEvent("error", "Connection teardown failed; retire this deployment."); });
+		const closed = bot
+			? this.captureConnection(bot).close()
+			: Promise.resolve();
+		void closed
+			.then(() => {
+				if (this.bot !== bot) return;
+				this.bot = null;
+				this.connection = null;
+				this.connectionClosing = false;
+				if (this.destroyed) return;
+				if (this.retryAfterClose && this.retryCount < MAX_RETRY_ATTEMPTS) {
+					this.retryCount++;
+					const delay = RETRY_DELAY_BASE_MS * this.retryCount;
+					this.emitEvent(
+						"info",
+						`Retry ${this.retryCount}/${MAX_RETRY_ATTEMPTS} in ${delay / 1000}s...`,
+					);
+					this.retryTimer = setTimeout(() => {
+						this.retryTimer = null;
+						if (
+							!this.destroyed &&
+							this.state === "disconnected" &&
+							!this.connectionClosing
+						) {
+							this.setState("spawning");
+							this.createBot();
+						}
+					}, delay);
+				} else if (this.retryCount >= MAX_RETRY_ATTEMPTS) {
+					this.emitEvent("error", "Max retry attempts reached. Session ended.");
+					this.destroy();
+				}
+			})
+			.catch(() => {
+				this.emitEvent(
+					"error",
+					"Connection teardown failed; retire this deployment.",
+				);
+			});
 	}
 
 	disconnect(): void {
@@ -474,7 +582,8 @@ export class BotSession {
 			};
 		if (this.destroyed)
 			return { ok: false, code: "UNAVAILABLE", error: "Bot has been retired." };
-		if (input.autoEat !== undefined) this.updateUpkeep({ ...this.upkeepSettings, autoEat: input.autoEat });
+		if (input.autoEat !== undefined)
+			this.updateUpkeep({ ...this.upkeepSettings, autoEat: input.autoEat });
 		this.behaviorSettings = copySettings(input);
 		this.idleBehaviors?.update(this.behaviorSettings);
 		this.callbacks.onStateChange();
@@ -485,17 +594,32 @@ export class BotSession {
 		return this.tasks.busy && this.tasks.status?.phase !== "running";
 	}
 	private equipmentOwner(): EquipmentOwner | null {
-		return this.tasks.owner ?? (this.idleBehaviors?.runtimeOwner?.active ? this.idleBehaviors.runtimeOwner : null);
+		return (
+			this.tasks.owner ??
+			(this.idleBehaviors?.runtimeOwner?.active
+				? this.idleBehaviors.runtimeOwner
+				: null)
+		);
 	}
 	private equipmentFor(bot: Bot): EquipmentService {
-		if (!this.equipmentService || this.equipmentService.bot !== bot) this.equipmentService = new EquipmentService(bot);
+		if (!this.equipmentService || this.equipmentService.bot !== bot)
+			this.equipmentService = new EquipmentService(bot);
 		return this.equipmentService;
 	}
 	updateUpkeep(input: unknown): SessionResult<UpkeepSettings> {
-		if (!validUpkeep(input)) return { ok: false, code: "INVALID_REQUEST", error: "Invalid upkeep settings." };
-		if (this.destroyed) return { ok: false, code: "UNAVAILABLE", error: "Bot retired." };
-		if (input.autoArmor && !this.upkeepSettings.autoArmor) this.equipmentService?.armorOverrides.clear();
-		this.upkeepSettings = { ...input }; this.upkeep?.update(input); this.callbacks.onStateChange();
+		if (!validUpkeep(input))
+			return {
+				ok: false,
+				code: "INVALID_REQUEST",
+				error: "Invalid upkeep settings.",
+			};
+		if (this.destroyed)
+			return { ok: false, code: "UNAVAILABLE", error: "Bot retired." };
+		if (input.autoArmor && !this.upkeepSettings.autoArmor)
+			this.equipmentService?.armorOverrides.clear();
+		this.upkeepSettings = { ...input };
+		this.upkeep?.update(input);
+		this.callbacks.onStateChange();
 		return { ok: true, value: { ...input } };
 	}
 
@@ -542,9 +666,23 @@ export class BotSession {
 		return result;
 	}
 
-	private executeAction(action: BotAction): PlayerCommandResult {
+	performExcavation(
+		request: unknown,
+		actor: CommandActor = { kind: "deployment" },
+	): ExcavationResult {
+		return this.excavation.submit(actor, request);
+	}
+
+	private executeAction(
+		action: BotAction,
+		actor: CommandActor = { kind: "deployment" },
+		taskId?: string,
+	): PlayerCommandResult {
 		if (!this.bot || this.destroyed || !["idle", "task"].includes(this.state))
 			return { ok: false, error: "The bot is not active." };
+		// Compatibility wire requests prepare a plan; only the service can confirm it.
+		if (action.type === "excavate" && !taskId)
+			return this.excavation.prepare(actor, action.region, true);
 		if (action.type === "stop") {
 			this.upkeep?.prepareForTask();
 			this.idleBehaviors?.prepareForTask();
@@ -568,7 +706,11 @@ export class BotSession {
 				ok: false,
 				error: "An inventory operation is still finishing. Try again shortly.",
 			};
-		if (this.upkeep && !this.upkeep.prepareForTask()) return { ok: false, error: "Upkeep is finishing cleanup; retry shortly." };
+		if (this.upkeep && !this.upkeep.prepareForTask())
+			return {
+				ok: false,
+				error: "Upkeep is finishing cleanup; retry shortly.",
+			};
 		if (this.idleBehaviors && !this.idleBehaviors.prepareForTask())
 			return {
 				ok: false,
@@ -576,17 +718,7 @@ export class BotSession {
 					"Idle behavior is stopping before this task can start. Retry once cleanup finishes.",
 			};
 		if (action.type === "excavate") {
-			const r = action.region;
-			const volume =
-				(Math.abs(r.x2 - r.x1) + 1) *
-				(Math.abs(r.y2 - r.y1) + 1) *
-				(Math.abs(r.z2 - r.z1) + 1);
-			if (volume > 10_000)
-				return {
-					ok: false,
-					error: "Excavation region too large (max 10000 blocks).",
-				};
-			this.startExcavate(r);
+			this.startExcavate(action.region, taskId!, actor);
 			this.resetIdleTimer();
 			return { ok: true };
 		}
@@ -599,6 +731,7 @@ export class BotSession {
 
 	/** Looks toward the nearest player or mob every physics tick. */
 	private lookAtNearestEntity(bot: Bot): void {
+		console.log(bot.nearestEntity((e) => e.type == "mob"));
 		const target = bot.nearestEntity(
 			// 'animal' is a valid runtime type; cast until mineflayer typings catch up
 			(e) => e.type === "player" || (e.type as string) === "animal",
@@ -662,8 +795,7 @@ export class BotSession {
 			return { ok: false, error: "Creative-mode players are invulnerable." };
 		}
 		const onFinished = (outcome: TaskOutcome): void => {
-			if (this.bot !== bot || this.destroyed || this.connectionClosing)
-				return;
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 			this.lastTaskOutcome = outcome;
 			this.protectStatus = undefined;
 			this.currentTask = null;
@@ -700,9 +832,19 @@ export class BotSession {
 		};
 		const task =
 			type === "follow"
-				? new FollowTask(bot, target.player.username, undefined, this.equipmentFor(bot))
+				? new FollowTask(
+						bot,
+						target.player.username,
+						undefined,
+						this.equipmentFor(bot),
+					)
 				: type === "attack"
-					? new AttackTask(bot, target.player.username, undefined, this.equipmentFor(bot))
+					? new AttackTask(
+							bot,
+							target.player.username,
+							undefined,
+							this.equipmentFor(bot),
+						)
 					: new ProtectTask(
 							bot,
 							target.player.username,
@@ -717,7 +859,9 @@ export class BotSession {
 								this.protectStatus = status;
 								this.callbacks.onStateChange();
 							},
-							undefined, undefined, this.equipmentFor(bot),
+							undefined,
+							undefined,
+							this.equipmentFor(bot),
 						);
 		this.lastTaskOutcome = undefined;
 		this.currentTask = type;
@@ -743,23 +887,53 @@ export class BotSession {
 		return { ok: true };
 	}
 
-	private startExcavate(region: ExcavateRegion): void {
+	private startExcavate(
+		region: ExcavateRegion,
+		taskId: string,
+		actor: CommandActor,
+	): void {
 		const bot = this.bot;
 		if (!bot) return;
-		const task = new ExcavateTask(bot, region, {
-			onEvent: (level, message) => { if (this.bot === bot && !this.destroyed && !this.connectionClosing) this.emitEvent(level, message); },
-			onProgress: (current, total) => {
-				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
-				const pct = Math.floor((current / total) * 100);
-				const prevPct = Math.floor(((current - 1) / total) * 100);
-				if (pct !== prevPct && pct % 10 === 0) this.emitEvent("info", `Excavation progress: ${pct}% (${current}/${total})`);
+		let lastFeedbackAt = Date.now();
+		const task = new ExcavateTask(
+			bot,
+			region,
+			{
+				onEvent: (level, message) => {
+					if (this.bot === bot && !this.destroyed && !this.connectionClosing)
+						this.emitEvent(level, message);
+				},
+				onProgress: (current, total) => {
+					this.excavation.progress(taskId, current);
+					if (this.bot !== bot || this.destroyed || this.connectionClosing)
+						return;
+					if (
+						actor.kind === "minecraft" &&
+						Date.now() - lastFeedbackAt >= 5_000
+					) {
+						lastFeedbackAt = Date.now();
+						this.excavationFeedback(
+							actor.username,
+							`Task ${taskId}: ${current}/${total} positions checked; status is available with !dig status ${taskId}.`,
+						);
+					}
+					const pct = Math.floor((current / total) * 100);
+					const prevPct = Math.floor(((current - 1) / total) * 100);
+					if (pct !== prevPct && pct % 10 === 0)
+						this.emitEvent(
+							"info",
+							`Excavation progress: ${pct}% (${current}/${total})`,
+						);
+				},
 			},
-		}, this.equipmentFor(bot));
+			this.equipmentFor(bot),
+		);
 		this.currentTask = "excavate";
 		this.taskTarget = null;
 		this.lastTaskOutcome = undefined;
 		this.setState("task");
-		this.tasks.start(task, outcome => {
+		this.tasks.start(task, (outcome) => {
+			this.excavation.finish(taskId, outcome);
 			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 			this.lastTaskOutcome = outcome;
 			this.currentTask = null;
@@ -767,11 +941,17 @@ export class BotSession {
 			if (this.state === "task") this.setState("idle");
 			this.resetIdleTimer();
 			this.emitEvent(outcome.level, outcome.message);
-			if (outcome.status === "completed") bot.chat("Excavation complete!");
+			if (actor.kind === "minecraft")
+				this.excavationFeedback(
+					actor.username,
+					`Task ${taskId}: ${outcome.message}`,
+				);
 		});
 		const { x1, y1, z1, x2, y2, z2 } = region;
-		this.emitEvent("info", `Excavate task started: (${x1},${y1},${z1}) → (${x2},${y2},${z2}).`);
-		bot.chat(`Starting excavation from (${x1},${y1},${z1}) to (${x2},${y2},${z2}).`);
+		this.emitEvent(
+			"info",
+			`Excavate task started: (${x1},${y1},${z1}) → (${x2},${y2},${z2}).`,
+		);
 	}
 
 	private stopTask(): void {
@@ -786,7 +966,13 @@ export class BotSession {
 			const bot = this.bot;
 			const timer = setTimeout(() => {
 				this.greetingTimers.delete(timer);
-				if (!bot || this.bot !== bot || this.destroyed || this.connectionClosing) return;
+				if (
+					!bot ||
+					this.bot !== bot ||
+					this.destroyed ||
+					this.connectionClosing
+				)
+					return;
 				bot.chat("Hi there!");
 				this.callbacks.onChat({
 					username: this.config.botName,
@@ -805,7 +991,17 @@ export class BotSession {
 		const result =
 			parsed.kind === "invalid"
 				? { ok: false as const, error: parsed.error }
-				: this.commands.submit({ kind: "minecraft", username }, parsed.action);
+				: parsed.kind === "excavation"
+					? this.performExcavation(parsed.request, {
+							kind: "minecraft",
+							username,
+						})
+					: this.commands.submit(
+							{ kind: "minecraft", username },
+							parsed.action,
+						);
+		if (result.ok && "message" in result && typeof result.message === "string")
+			this.excavationFeedback(username, result.message);
 		if (!result.ok) {
 			this.emitEvent(
 				"warning",
@@ -817,6 +1013,32 @@ export class BotSession {
 				} catch {
 					/* server may not support /tell */
 				}
+			}
+		}
+	}
+
+	private excavationFeedback(username: string, message: string): void {
+		if (
+			!this.bot ||
+			!normalizePlayerName(username) ||
+			username !== username.trim()
+		)
+			return;
+		// Keep tell packets short and mirror only to the authorized dashboard.
+		for (const part of message.match(/.{1,190}(?:\s|$)|.{1,190}/g) ?? []) {
+			try {
+				const result = whisperToPlayer(this.bot, username, part.trim());
+				if (result.ok)
+					this.callbacks.onChat({
+						username: this.config.botName,
+						message: part.trim(),
+						timestamp: Date.now(),
+						isBot: true,
+						channel: "whisper",
+						recipient: username,
+					});
+			} catch {
+				/* No public fallback when tell is unavailable. */
 			}
 		}
 	}
@@ -881,7 +1103,13 @@ export class BotSession {
 
 	async unequipAndDropArmor(slot: ArmorSlotId): Promise<void> {
 		const bot = this.bot;
-		if (!bot || this.destroyed || this.connectionClosing || !["idle", "task"].includes(this.state)) return;
+		if (
+			!bot ||
+			this.destroyed ||
+			this.connectionClosing ||
+			!["idle", "task"].includes(this.state)
+		)
+			return;
 		if (
 			this.manualInventoryBusy ||
 			(this.idleBehaviors && !this.idleBehaviors.prepareForTask()) ||
@@ -904,10 +1132,14 @@ export class BotSession {
 		try {
 			equipment.armorOverrides.add(slot);
 			await equipment.exclusive(async () => {
-				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
+				if (this.bot !== bot || this.destroyed || this.connectionClosing)
+					return;
 				await bot.unequip(slot);
-				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
-				const invItem = bot.inventory.items().find((i) => equipment.sameItem(i, item));
+				if (this.bot !== bot || this.destroyed || this.connectionClosing)
+					return;
+				const invItem = bot.inventory
+					.items()
+					.find((i) => equipment.sameItem(i, item));
 				if (invItem) await bot.tossStack(invItem);
 			});
 			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;

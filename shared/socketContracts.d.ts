@@ -17,6 +17,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  'bot:excavation': (sessionId: string, request: import('./excavationContracts.js').ExcavationRequest, callback: (result: import('./excavationContracts.js').ExcavationResult) => void) => void;
   'bot:upkeep:update': (sessionId: string, settings: UpkeepSettings, callback: (result: SessionResult<UpkeepSettings>) => void) => void;
   'bot:behaviors:update': (sessionId: string, settings: BehaviorSettings, callback: (result: SessionResult<BehaviorSettings>) => void) => void;
   'bot:access:get': (sessionId: string, callback: (result: PlayerAccessResult) => void) => void;

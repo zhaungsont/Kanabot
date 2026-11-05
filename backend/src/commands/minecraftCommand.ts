@@ -1,6 +1,8 @@
 import type { BotAction } from '../types.js';
+import type { ExcavationRequest } from '../../../shared/excavationContracts.js';
+import { parseExcavation } from '../excavation/commands.js';
 
-export type ParsedMinecraftCommand = { kind: 'ignore' } | { kind: 'invalid'; error: string } | { kind: 'action'; action: BotAction };
+export type ParsedMinecraftCommand = { kind: 'ignore' } | { kind: 'invalid'; error: string } | { kind: 'action'; action: BotAction } | { kind: 'excavation'; request: ExcavationRequest };
 /** Parse intents only; sender authority is decided by BotCommandService. */
 export function parseMinecraftCommand(username: string, message: string): ParsedMinecraftCommand {
   const [verb, ...args] = message.trim().split(/\s+/);
@@ -11,9 +13,8 @@ export function parseMinecraftCommand(username: string, message: string): Parsed
     return { kind: 'action', action: { type: command === '!guard' ? 'protect' : command.slice(1) as 'follow' | 'protect' | 'attack', target: args[0] ?? username } };
   }
   if (command === '!dig' || command === '!excavate') {
-    if (args.length !== 6) return { kind: 'invalid', error: 'Usage: !dig <x1> <y1> <z1> <x2> <y2> <z2>' };
-    const [x1, y1, z1, x2, y2, z2] = args.map(Number);
-    return { kind: 'action', action: { type: 'excavate', region: { x1, y1, z1, x2, y2, z2 } } };
+    try { return { kind: 'excavation', request: parseExcavation(args) }; }
+    catch (error) { return { kind: 'invalid', error: (error as Error).message }; }
   }
   return { kind: 'ignore' };
 }
