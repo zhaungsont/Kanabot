@@ -8,6 +8,11 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Hostile mob identification — 2026-11-06
+
+- Protect (including Guard) and self-defense fallback targeting now identify hostile mobs by `entity.kind === 'Hostile mobs'`, supporting entity data that uses `type: 'mob'`. Missing or other kinds are excluded; direct retaliation against identified attackers remains unchanged.
+- Updated simulated combat fixtures and regression coverage for hostile kinds across entity types and rejection of missing/non-hostile kinds. Live Minecraft compatibility remains unverified.
+
 ### External-stance excavation release — 2026-11-05
 
 - Implemented one explicit origin plus directional sizes in chat/tell and dashboard, with read-only previews, 120-second issuer-bound confirmation, idempotent acceptance, scoped stop/status and bounded in-memory history. Legacy coordinate wire actions prepare only; old six-coordinate chat syntax is removed.

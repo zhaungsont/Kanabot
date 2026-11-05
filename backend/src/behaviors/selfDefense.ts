@@ -116,7 +116,7 @@ export class SelfDefenseReaction implements EquipmentOwner {
     let target = !this.invalid.has(this.attacker) && trackedAttacker(this.bot, this.attacker) ? this.attacker : null;
     if (!target) {
       for (const entity of Object.values(this.bot.entities)) {
-        if (entity.type !== 'hostile' || this.invalid.has(entity) || !trackedAttacker(this.bot, entity) || distanceSquared(entity.position, this.bot.entity.position) > 12 ** 2) continue;
+        if (entity.kind !== 'Hostile mobs' || this.invalid.has(entity) || !trackedAttacker(this.bot, entity) || distanceSquared(entity.position, this.bot.entity.position) > 12 ** 2) continue;
         if (!target || distanceSquared(entity.position, this.bot.entity.position) < distanceSquared(target.position, this.bot.entity.position)) target = entity;
       }
     }

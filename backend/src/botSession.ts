@@ -731,7 +731,7 @@ export class BotSession {
 
 	/** Looks toward the nearest player or mob every physics tick. */
 	private lookAtNearestEntity(bot: Bot): void {
-		console.log(bot.nearestEntity((e) => e.type == "mob"));
+		// console.log(bot.nearestEntity((e) => e.type == "mob"));
 		const target = bot.nearestEntity(
 			// 'animal' is a valid runtime type; cast until mineflayer typings catch up
 			(e) => e.type === "player" || (e.type as string) === "animal",

@@ -32,7 +32,7 @@ function fixture() {
   let writes = 0;
   bot.equip = async () => { writes++; };
   const mob = (id: number, x: number, y = 64, z = 0, name = 'zombie') => {
-    const entity = { id, name, type: 'hostile', height: 1.8, isValid: true, position: new Vec3(x, y, z) } as Entity;
+    const entity = { id, name, type: 'mob', kind: 'Hostile mobs', height: 1.8, isValid: true, position: new Vec3(x, y, z) } as Entity;
     bot.entities[id] = entity;
     return entity;
   };
@@ -71,6 +71,22 @@ test('3D distances, deterministic ties, damage priority, retention and release b
   assert.equal(selectThreat([candidate(a, 10)], null, 0, 0)?.entity, a);
   assert.equal(selectThreat([candidate(a, 16)], null, 0, 0), null);
   assert.equal(selectThreat([candidate(a, 16)], a, 0, 0)?.entity, a);
+});
+
+test('observer identifies hostile mobs by kind for acquisition, damage and revalidation', () => {
+  const { bot, mob, alex } = fixture(); const observer = new ThreatObserver(bot);
+  const zombie = mob(3, 11);
+  const modern = mob(4, 12); modern.type = 'hostile';
+  const passive = mob(5, 10); passive.kind = 'Passive mobs';
+  const missing = mob(6, 10); missing.type = 'hostile'; delete missing.kind;
+  const misleading = mob(7, 10); misleading.type = 'hostile'; misleading.kind = 'Passive mobs';
+  for (const entity of [zombie, modern, passive, missing, misleading]) observer.hurt(alex.entity!, entity, alex.entity!, 0);
+  const candidates = observer.observe(alex.entity!, null, 100);
+  assert.deepEqual(candidates.map(c => c.entity), [zombie, modern]);
+  assert.ok(candidates.every(c => c.confirmed));
+  zombie.kind = 'Passive mobs';
+  assert.equal(observer.eligible(zombie), false);
+  assert.deepEqual(observer.observe(alex.entity!, zombie, 200).map(c => c.entity), [modern]);
 });
 
 test('observer bounds rays, preserves aggressors, excludes players/stale/dead entities, handles missing chunks', () => {

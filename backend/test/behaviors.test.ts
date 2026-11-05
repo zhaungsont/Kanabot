@@ -20,7 +20,7 @@ function fixture() {
   const pvp = Object.assign(Object.create(PVP.prototype), { bot, target: undefined, movements: bot.pvp.movements, followRange: 2 });
   bot.pvp = pvp;
   bot.pathfinder.stop = () => { bot.emit('path_stop'); };
-  const attacker = { id: 3, name: 'zombie', type: 'hostile', position: new Vec3(5, 64, 0), isValid: true } as Entity;
+  const attacker = { id: 3, name: 'zombie', type: 'mob', kind: 'Hostile mobs', position: new Vec3(5, 64, 0), isValid: true } as Entity;
   bot.entities[3] = attacker;
   Object.assign(bot, { heldItem: { name: 'iron_sword' }, food: 10 });
   return { ...fixture, attacker };
@@ -76,7 +76,7 @@ test('flight requests additional separation even when a ranged attacker is alrea
   assert.equal(goal.isEnd(bot.entity.position), false);
 });
 
-test('dead attackers are retired; nearby hostile mobs may be selected during the same bounded response', async t => {
+test('dead attackers are retired; fallback threats require hostile kind during the same bounded response', async t => {
   const timer = clock(t); const { bot, attacker } = fixture();
   const settings = defaultBehaviors(); settings.selfDefense = { enabled: true, mode: 'fight', durationSeconds: 10 };
   const runtime = new IdleBehaviors(bot, settings, () => true, () => {}, () => {}, timer.now);
@@ -84,6 +84,11 @@ test('dead attackers are retired; nearby hostile mobs may be selected during the
   bot.emit('entityHurt', bot.entity, attacker); await flush(); await flush(); assert.equal(bot.pvp.target, attacker);
   bot.emit('entityDead', attacker); await timer.advance(333); assert.equal(bot.pvp.target, undefined);
   assert.equal(runtime.busy, true); // Watch for the rest of the original response window.
+  const passive = { ...attacker, id: 5, type: 'hostile', kind: 'Passive mobs', position: new Vec3(1, 64, 0) } as Entity;
+  const missing = { ...attacker, id: 6, type: 'hostile', position: new Vec3(2, 64, 0) } as Entity;
+  delete missing.kind;
+  bot.entities[5] = passive; bot.entities[6] = missing;
+  await timer.advance(333); assert.equal(bot.pvp.target, undefined);
   const next = { ...attacker, id: 4 } as Entity; bot.entities[4] = next;
   await timer.advance(333); assert.equal(bot.pvp.target, next);
   await timer.advance(10_000); assert.equal(runtime.busy, false);

@@ -12,7 +12,7 @@ export class ThreatObserver {
   constructor(private readonly bot: Bot) {}
   eligible(entity: Entity): boolean {
     const dimension = (entity as Entity & { dimension?: string } | undefined)?.dimension;
-    return !!entity && entity !== this.bot.entity && entity.type === 'hostile' && entity.isValid !== false &&
+    return !!entity && entity !== this.bot.entity && entity.kind === 'Hostile mobs' && entity.isValid !== false &&
       (!dimension || dimension === this.bot.game.dimension) &&
       !this.dead.has(entity) && this.bot.entities[entity.id] === entity &&
       [entity.position.x, entity.position.y, entity.position.z].every(Number.isFinite) && !!this.bot.blockAt(entity.position);
