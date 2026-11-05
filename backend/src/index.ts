@@ -1,39 +1,6 @@
 import 'dotenv/config';
 
-// ─── Process-level safety net ─────────────────────────────────────────────────
-// Prevent raw unhandled errors (e.g. ECONNRESET, protodef PartialReadError)
-// from crashing the server or printing noisy stack traces.
-process.on('uncaughtException', (err: Error & { code?: string }) => {
-  const benignCodes = ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EPIPE'];
-
-  if (err.code && benignCodes.includes(err.code)) {
-    console.warn(`[Process] Swallowed network error: ${err.code} — ${err.message}`);
-    return;
-  }
-
-  // PartialReadError / FullPacketParser errors from protodef / minecraft-protocol.
-  // These are caused by a server↔client Minecraft version mismatch — the packet
-  // format doesn't match what mineflayer expected. They are non-fatal (the bot's
-  // error event fires right after and the session retries), so we downgrade them
-  // from a raw crash-level stack trace to a structured warning.
-  if (
-    err.name === 'PartialReadError' ||
-    err.constructor?.name === 'PartialReadError' ||
-    err.message?.includes('Unexpected buffer end')
-  ) {
-    console.warn(
-      '[Process] Mineflayer packet parse error (likely version mismatch) —',
-      err.message,
-    );
-    return;
-  }
-
-  console.error('[Process] Uncaught exception:', err);
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('[Process] Unhandled rejection:', reason);
-});
+import './runtime/processSafety.js';
 
 import express from 'express';
 import { createServer } from 'http';

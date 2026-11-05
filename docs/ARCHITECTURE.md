@@ -1,6 +1,6 @@
 # Kanabot Architecture and Delivery Design
 
-Status: target architecture with the local lifecycle foundation implemented; other proposed components are not yet implemented. Updated: 2026-11-03.
+Status: target architecture with local lifecycle/task foundations implemented; other proposed components are not yet implemented. Updated: 2026-11-05.
 
 This document explains how to deliver [ROADMAP.md](ROADMAP.md) through Local MVP, Local Stable (1.0), Cloud MVP, and Cloud Stable (1.0) with one application architecture. It describes boundaries to establish early, infrastructure to add only when needed, and the checks required to keep local/cloud behavior aligned.
 
@@ -116,6 +116,8 @@ Define a capability contract with a versioned ID, validated parameters/configura
 
 The resource arbiter controls movement, combat, look direction, equipment, inventory, and interaction as needed. Local MVP can implement a small exclusive task model with non-conflicting passive chat/observation; expand concurrency only when demonstrated requirements demand it.
 
+The delivered [local task lifecycle](TASK_LIFECYCLE.md) gives Follow, Attack, Protect and excavation one `TaskRuntime` contract and a transport-independent `TaskCoordinator`. It owns exclusive admission and observes cleanup-start/completion promises without inspecting concrete task classes. Task modules own cancellation and teardown; all task kinds retain ownership through pending or rejected cleanup. The shared wire projection adds task lifecycle details and the latest structured outcome, including partial excavation counts. This is a local resource lease, not a persisted capability registry, distributed scheduler or durable command protocol.
+
 The implemented [Protect runtime](PROTECT_DESIGN.md) applies those boundaries to escort/combat transitions and threat selection. `ProtectTask` owns serialized transitions and teardown; `ThreatObserver`, pure `ThreatSelector`, `ProtectCombatAdapter`, and the read-only `EquipmentPort` remain transport-independent. The session's exclusive task/cleanup gate is the local movement lease; no distributed scheduler is added. Shared `ProtectStatus` lets a replacement dashboard render execution without game rules. [EQUIPMENT_DESIGN.md](EQUIPMENT_DESIGN.md) documents the implemented equipment foundation and remaining optimization work. Future player-threat defense belongs to Protect invocation authority without a second RBAC check; player candidates are currently excluded. Stop cleanup must settle before a successor starts; failure is visible and holds the lease until retirement.
 
 Examples of policies:
@@ -206,6 +208,7 @@ The local runtime now has browser-independent execution. `BotManager` owns stabl
 - Reattachment returns current bot state, cached armor, up to 200 chat messages and 150 events. History is bounded and ephemeral. Player telemetry remains opt-in; the final interested viewer leaving stops roster sampling, not execution.
 - The frontend stores one handle per browser origin/backend URL in localStorage through an injected, React-independent storage module. Route unmount, refresh, tab closure, and transport loss do not send a bot-stop command. Reopening the dashboard resumes the saved handle. Storage must be available before deployment; clearing it loses this local capability.
 - Explicit Disconnect Bot retires the session for all viewers and cancels pending retries. A retired ID cannot replay a create during this backend lifetime. The existing ten-minute idle policy still applies without viewers; observation does not renew it. Active tasks can continue without a dashboard.
+- Retirement controls remain available to attached viewers in spawning/dead/disconnected states. Captured-connection teardown must confirm `end` before automatic replacement; late callbacks cannot revive a retired session. Unexpected uncaught process errors terminate the backend rather than continuing with uncertain state. Worker isolation and process supervision remain proposed infrastructure.
 - Common JSON data, lifecycle responses, and socket interfaces are shared under `shared/`. Dates use ISO strings on the wire. Runtime schemas and uniform legacy-command outcomes remain follow-up work.
 
 This change is worth establishing before the UI overhaul: execution ownership, stable identity, and observer separation also apply to persisted accounts and remote workers. The local bearer capability is temporary scaffolding, not the proposed account system. Backend restart still loses all sessions; missing handles are cleared on resume. Multi-bot account discovery, worker isolation, durable replay protection, and quotas remain future work. Detailed deferred defects are tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).

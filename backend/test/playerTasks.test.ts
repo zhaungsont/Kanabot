@@ -107,8 +107,8 @@ test('session blocks every new task until pending attack startup and cleanup com
   session.performAction('stop');
   assert.equal(session.performPlayerCommand({ type: 'follow', target: 'Alex' }).ok, false);
   session.performAction('guard', 'Alex');
-  assert.equal(session.currentTask, null);
-  assert.match(events.at(-1)!.message, /still stopping/);
+  assert.equal(session.currentTask, 'attack');
+  assert.equal(session.getInfo().taskLifecycle?.phase, 'stopping');
   release();
   await flush();
   assert.equal(calls.stops, 1);

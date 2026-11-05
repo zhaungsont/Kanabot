@@ -24,7 +24,7 @@ function fixture() {
   let quits = 0;
   let callbacks!: BotSessionCallbacks;
   const { bot } = fakeBot();
-  bot.quit = () => { quits++; };
+  bot.quit = () => { quits++; bot.emit('end', 'quit'); };
   const manager = new BotManager((id, configuration, cb) => {
     callbacks = cb;
     const session = new BotSession(id, configuration, cb);

@@ -18,7 +18,7 @@ export function fakeBot() {
     inventory: { items: () => [weapon] as { name: string }[], slots: Array(46).fill(null) },
     equip: async (_item: unknown, _slot: string) => {},
     whisper: (...args: unknown[]) => { calls.whispers.push(args); },
-    chat: (_message: string) => {}, quit: () => {},
+    chat: (_message: string) => {}, quit: () => { bot.emit('end', 'quit'); }, end: () => { bot.emit('end', 'end'); },
     pathfinder: {
       thinkTimeout: 5_000, tickTimeout: 40, searchRadius: -1,
       movements: { canDig: true, allow1by1towers: true },

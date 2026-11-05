@@ -38,10 +38,9 @@ import { FollowTask } from "./tasks/followTask.js";
 import { AttackTask } from "./tasks/attackTask.js";
 import { ProtectTask } from "./tasks/protect/protectTask.js";
 import type { ProtectStatus } from "../../shared/botContracts.js";
-import type {
-	TrackedPlayerTask,
-	PlayerTaskOutcome,
-} from "./tasks/trackedPlayerTask.js";
+import { BotConnection } from "./runtime/botConnection.js";
+import { TaskCoordinator } from "./tasks/taskCoordinator.js";
+import type { TaskOutcome } from "../../shared/taskContracts.js";
 import { PlayerRoster } from "./players/playerRoster.js";
 import { resolvePlayerTarget } from "./players/playerTarget.js";
 import { whisperToPlayer } from "./players/whisper.js";
@@ -79,6 +78,11 @@ export class BotSession {
 	spawnedAt: Date | null = null;
 
 	private bot: Bot | null = null;
+	private connection: BotConnection | null = null;
+	private connectionClosing = false;
+	private retryAfterClose = false;
+	private connectionErrorTimer: ReturnType<typeof setTimeout> | null = null;
+	private readonly greetingTimers = new Set<ReturnType<typeof setTimeout>>();
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private retryTimer: ReturnType<typeof setTimeout> | null = null;
 	private protectStatus: ProtectStatus | undefined;
@@ -94,11 +98,10 @@ export class BotSession {
 	private upkeep: Upkeep | null = null;
 	private equipmentService: EquipmentService | null = null;
 	private manualInventoryBusy: symbol | null = null;
-	private activePlayerTask: TrackedPlayerTask | ProtectTask | null = null;
-	private playerTaskCleanup: Promise<void> | null = null;
+	private readonly tasks: TaskCoordinator;
+	private lastTaskOutcome: TaskOutcome | undefined;
 	private playerRoster: PlayerRoster | null = null;
 	private playersSubscribed = false;
-	private activeExcavateTask: ExcavateTask | null = null;
 	private retryCount = 0;
 	private destroyed = false;
 	private wasKicked = false;
@@ -111,10 +114,13 @@ export class BotSession {
 		sessionId: string,
 		config: BotConfig,
 		callbacks: BotSessionCallbacks,
+		private readonly createMineflayerBot: typeof mineflayer.createBot = mineflayer.createBot,
 	) {
 		this.sessionId = sessionId;
 		this.config = config;
 		this.callbacks = callbacks;
+		this.tasks = new TaskCoordinator(() => { if (!this.destroyed) this.callbacks.onStateChange(); },
+			message => { if (!this.destroyed) this.emitEvent("error", message); });
 		this.playerRoles = new PlayerRoleStore(sessionId);
 		this.commands = new BotCommandService(this.playerRoles, (action) =>
 			this.executeAction(action),
@@ -138,6 +144,8 @@ export class BotSession {
 			spawnedAt: this.spawnedAt?.toISOString() ?? null,
 			uptime: this.uptime,
 			protect: this.protectStatus,
+			taskLifecycle: this.tasks.status,
+			lastTaskOutcome: this.lastTaskOutcome,
 			upkeep: { ...this.upkeepStatus, settings: { ...this.upkeepSettings } },
 			behaviors: {
 				...this.behaviorStatus,
@@ -149,7 +157,7 @@ export class BotSession {
 	// ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 	spawn(): void {
-		if (this.destroyed) return;
+		if (this.destroyed || this.connectionClosing) return;
 		if (this.state !== "disconnected" && this.state !== "dead") return;
 		this.setState("spawning");
 		const target = this.config.serverPort
@@ -164,7 +172,7 @@ export class BotSession {
 		this.wasKicked = false;
 		this.tickErrorLogged = false;
 		try {
-			this.bot = mineflayer.createBot({
+			this.bot = this.createMineflayerBot({
 				host: this.config.serverHost,
 				...(this.config.serverPort !== undefined && {
 					port: this.config.serverPort,
@@ -173,6 +181,7 @@ export class BotSession {
 				version: this.config.version || undefined,
 				auth: "offline",
 			});
+			this.captureConnection(this.bot);
 			this.bot.loadPlugin(pathfinder);
 			this.bot.loadPlugin(pvp);
 			this.bot.loadPlugin(toolPlugin);
@@ -190,15 +199,17 @@ export class BotSession {
 		// "Cannot read properties of null" if callbacks used this.bot! directly.
 		const bot = this.bot;
 		if (!bot) return;
+		this.clearConnectionTimers();
+		this.captureConnection(bot);
 		this.manualInventoryBusy = null;
 		this.idleBehaviors?.dispose();
 		this.upkeep?.dispose();
 		this.equipmentService = new EquipmentService(bot);
 		this.upkeep = new Upkeep(bot, this.upkeepSettings, this.equipmentService, () => this.equipmentOwner(),
-			() => this.bot === bot && !this.destroyed && ["idle", "task"].includes(this.state) && !this.playerTaskCleanup && !this.manualInventoryBusy &&
+			() => this.bot === bot && !this.destroyed && !this.connectionClosing && ["idle", "task"].includes(this.state) && !this.taskCleanupPending && !this.manualInventoryBusy &&
 				(this.state === "task" ? !!this.equipmentOwner() : !this.idleBehaviors?.busy || !!this.idleBehaviors.runtimeOwner),
-			status => { if (this.bot === bot && !this.destroyed) { this.upkeepStatus = status; this.callbacks.onStateChange(); } },
-			(message, level = "info") => { if (this.bot === bot && !this.destroyed) { this.emitEvent(level, message); this.emitArmorUpdate(bot); } });
+			status => { if (this.bot === bot && !this.destroyed && !this.connectionClosing) { this.upkeepStatus = status; this.callbacks.onStateChange(); } },
+			(message, level = "info") => { if (this.bot === bot && !this.destroyed && !this.connectionClosing) { this.emitEvent(level, message); this.emitArmorUpdate(bot); } });
 		this.idleBehaviors = new IdleBehaviors(
 			bot,
 			this.behaviorSettings,
@@ -207,29 +218,31 @@ export class BotSession {
 				!this.destroyed &&
 				this.state === "idle" &&
 				this.currentTask === null &&
-				!this.playerTaskCleanup &&
-				!this.activeExcavateTask &&
+				!this.taskCleanupPending &&
+				!this.tasks.busy &&
 				!this.manualInventoryBusy && !this.upkeep?.busy,
 			(status) => {
-				if (this.bot !== bot || this.destroyed) return;
+				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 				this.behaviorStatus = status;
 				this.callbacks.onStateChange();
 			},
 			(message, level = "warning") => {
-				if (this.bot === bot && !this.destroyed) this.emitEvent(level, message);
+				if (this.bot === bot && !this.destroyed && !this.connectionClosing) this.emitEvent(level, message);
 			},
 		);
 		this.playerRoster?.dispose();
 		this.playerRoster = new PlayerRoster(bot, (snapshot) => {
-			if (this.bot === bot && !this.destroyed) {
+			if (this.bot === bot && !this.destroyed && !this.connectionClosing) {
 				this.callbacks.onPlayers({ sessionId: this.sessionId, ...snapshot });
 			}
 		});
 
 		bot.on("spawn", () => {
 			// Stale-event guard: skip if this bot has already been replaced or destroyed.
-			if (this.bot !== bot || this.destroyed) return;
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 
+			if (this.connectionErrorTimer) clearTimeout(this.connectionErrorTimer);
+			this.connectionErrorTimer = null;
 			const isRespawn = this.state === "dead";
 
 			if (!isRespawn) {
@@ -261,7 +274,7 @@ export class BotSession {
 
 		bot.on("entityEquip", (entity: any) => {
 			// console.log('in entityEquip');
-			if (this.bot !== bot || this.destroyed) return;
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 			// console.log("entity", entity);
 			if (entity !== bot.entity) return;
 			// console.log("entityEquip", entity);
@@ -269,7 +282,7 @@ export class BotSession {
 		});
 
 		bot.on("physicsTick", () => {
-			if (this.bot !== bot) return;
+			if (this.bot !== bot || this.connectionClosing) return;
 			try {
 				// Pathfinder/combat owns looking during tasks; passive glances must not fight it.
 				if (this.state === "idle" && !this.idleBehaviors?.busy && !this.upkeep?.busy)
@@ -286,7 +299,7 @@ export class BotSession {
 		});
 
 		bot.on("chat", (username: string, message: string) => {
-			if (this.bot !== bot) return;
+			if (this.bot !== bot || this.connectionClosing) return;
 			if (username === this.config.botName) return;
 
 			this.callbacks.onChat({ username, message, timestamp: Date.now() });
@@ -297,7 +310,7 @@ export class BotSession {
 		bot.on("whisper", (username: string, message: string) => {
 			if (
 				this.bot !== bot ||
-				this.destroyed ||
+				this.destroyed || this.connectionClosing ||
 				username === this.config.botName
 			)
 				return;
@@ -311,7 +324,7 @@ export class BotSession {
 		});
 
 		bot.on("death", () => {
-			if (this.bot !== bot) return;
+			if (this.bot !== bot || this.connectionClosing) return;
 			this.stopTask();
 			this.clearIdleTimer();
 			this.setState("dead");
@@ -321,7 +334,7 @@ export class BotSession {
 		});
 
 		bot.on("kicked", (reason: string) => {
-			if (this.bot !== bot) return;
+			if (this.bot !== bot || this.connectionClosing) return;
 			this.wasKicked = true;
 			this.stopTask();
 			this.clearIdleTimer();
@@ -331,7 +344,7 @@ export class BotSession {
 		});
 
 		bot.on("error", (err: Error & { name?: string }) => {
-			if (this.bot !== bot) return;
+			if (this.bot !== bot || this.connectionClosing) return;
 
 			// protodef PartialReadError — indicates a Minecraft version mismatch between
 			// the bot config and the actual server. The session will end and retry, so
@@ -347,27 +360,27 @@ export class BotSession {
 						`Try setting the Minecraft version explicitly (e.g. "1.21.4"). ` +
 						`[${err.message}]`,
 				);
-				return;
+			} else {
+				const msg = friendlyErrorMessage(err);
+				this.emitEvent("error", `Bot error: ${msg}`);
 			}
-
-			const msg = friendlyErrorMessage(err);
-			this.emitEvent("error", `Bot error: ${msg}`);
 
 			// If 'end' never fires (e.g. DNS failure, early ECONNRESET), recover the
 			// session so it doesn't stay stuck in 'spawning' forever.
 			if (this.state === "spawning") {
 				this.stopTask();
 				this.clearIdleTimer();
-				setTimeout(() => {
-					if (this.state === "spawning" && !this.destroyed) {
+				if (this.connectionErrorTimer) return;
+				this.connectionErrorTimer = setTimeout(() => {
+					this.connectionErrorTimer = null;
+					if (this.bot === bot && this.state === "spawning" && !this.destroyed && !this.connectionClosing)
 						this.handleDisconnect(!this.wasKicked);
-					}
 				}, 500);
 			}
 		});
 
 		bot.on("end", (reason: string) => {
-			if (this.bot !== bot || this.destroyed) return;
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 			this.stopTask();
 			this.clearIdleTimer();
 			this.emitEvent("info", `Bot disconnected: ${reason}`);
@@ -376,58 +389,67 @@ export class BotSession {
 		});
 	}
 
-	private handleDisconnect(shouldRetry: boolean): void {
-		if (this.destroyed) return;
-		this.clearRetryTimer();
-		this.upkeep?.dispose();
-		this.upkeep = null;
-		this.idleBehaviors?.dispose();
-		this.idleBehaviors = null;
-		this.playerRoster?.dispose();
-		this.playerRoster = null;
-		this.bot = null;
-		this.setState("disconnected");
-
-		if (shouldRetry && this.retryCount < MAX_RETRY_ATTEMPTS) {
-			this.retryCount++;
-			const delay = RETRY_DELAY_BASE_MS * this.retryCount;
-			this.emitEvent(
-				"info",
-				`Retry ${this.retryCount}/${MAX_RETRY_ATTEMPTS} in ${delay / 1000}s...`,
-			);
-			this.retryTimer = setTimeout(() => {
-				this.retryTimer = null;
-				if (!this.destroyed && this.state === "disconnected") {
-					this.setState("spawning");
-					this.createBot();
-				}
-			}, delay);
-		} else if (this.retryCount >= MAX_RETRY_ATTEMPTS) {
-			this.emitEvent("error", "Max retry attempts reached. Session ended.");
-			this.destroy();
+	private captureConnection(bot: Bot): BotConnection {
+		if (!this.connection || this.connection.bot !== bot) {
+			this.connection = new BotConnection(bot, message => {
+				if (!this.destroyed && this.bot === bot) this.emitEvent("error", message);
+			});
 		}
+		return this.connection;
+	}
+
+	private clearConnectionTimers(): void {
+		if (this.connectionErrorTimer) clearTimeout(this.connectionErrorTimer);
+		this.connectionErrorTimer = null;
+		for (const timer of this.greetingTimers) clearTimeout(timer);
+		this.greetingTimers.clear();
+	}
+
+	private handleDisconnect(shouldRetry: boolean): void {
+		this.clearRetryTimer();
+		this.clearConnectionTimers();
+		if (this.connectionClosing) {
+			if (!shouldRetry) this.retryAfterClose = false;
+			return;
+		}
+		this.retryAfterClose = shouldRetry;
+		this.connectionClosing = true;
+		this.stopTask();
+		this.upkeep?.dispose(); this.upkeep = null;
+		this.idleBehaviors?.dispose(); this.idleBehaviors = null;
+		this.playerRoster?.dispose(); this.playerRoster = null;
+		this.clearIdleTimer();
+		this.currentTask = null;
+		this.taskTarget = null;
+		this.protectStatus = undefined;
+		this.setState("disconnected");
+		const bot = this.bot;
+		const closed = bot ? this.captureConnection(bot).close() : Promise.resolve();
+		void closed.then(() => {
+			if (this.bot !== bot) return;
+			this.bot = null;
+			this.connection = null;
+			this.connectionClosing = false;
+			if (this.destroyed) return;
+			if (this.retryAfterClose && this.retryCount < MAX_RETRY_ATTEMPTS) {
+				this.retryCount++;
+				const delay = RETRY_DELAY_BASE_MS * this.retryCount;
+				this.emitEvent("info", `Retry ${this.retryCount}/${MAX_RETRY_ATTEMPTS} in ${delay / 1000}s...`);
+				this.retryTimer = setTimeout(() => {
+					this.retryTimer = null;
+					if (!this.destroyed && this.state === "disconnected" && !this.connectionClosing) {
+						this.setState("spawning"); this.createBot();
+					}
+				}, delay);
+			} else if (this.retryCount >= MAX_RETRY_ATTEMPTS) {
+				this.emitEvent("error", "Max retry attempts reached. Session ended."); this.destroy();
+			}
+		}).catch(() => { this.emitEvent("error", "Connection teardown failed; retire this deployment."); });
 	}
 
 	disconnect(): void {
-		this.clearRetryTimer();
-		this.upkeep?.dispose();
-		this.upkeep = null;
-		this.idleBehaviors?.dispose();
-		this.idleBehaviors = null;
-		this.stopTask();
-		this.playerRoster?.dispose();
-		this.playerRoster = null;
 		this.playersSubscribed = false;
-		this.clearIdleTimer();
-		if (this.bot) {
-			try {
-				this.bot.quit();
-			} catch (_) {
-				/* swallow quit errors */
-			}
-			this.bot = null;
-		}
-		this.setState("disconnected");
+		this.handleDisconnect(false);
 		this.emitEvent("info", "Bot disconnected by user.");
 		this.emitSystemChat("Bot has disconnected.");
 	}
@@ -435,6 +457,7 @@ export class BotSession {
 	destroy(): void {
 		if (this.destroyed) return;
 		this.destroyed = true;
+		this.tasks.dispose();
 		this.disconnect();
 		this.callbacks.onDestroy();
 	}
@@ -458,8 +481,11 @@ export class BotSession {
 		return { ok: true, value: copySettings(this.behaviorSettings) };
 	}
 
+	private get taskCleanupPending(): boolean {
+		return this.tasks.busy && this.tasks.status?.phase !== "running";
+	}
 	private equipmentOwner(): EquipmentOwner | null {
-		return this.activePlayerTask?.active ? this.activePlayerTask : this.activeExcavateTask?.active ? this.activeExcavateTask : this.idleBehaviors?.runtimeOwner?.active ? this.idleBehaviors.runtimeOwner : null;
+		return this.tasks.owner ?? (this.idleBehaviors?.runtimeOwner?.active ? this.idleBehaviors.runtimeOwner : null);
 	}
 	private equipmentFor(bot: Bot): EquipmentService {
 		if (!this.equipmentService || this.equipmentService.bot !== bot) this.equipmentService = new EquipmentService(bot);
@@ -532,7 +558,7 @@ export class BotSession {
 				ok: false,
 				error: `Cannot start task: bot is currently in state "${this.state}".`,
 			};
-		if (this.playerTaskCleanup || this.activeExcavateTask)
+		if (this.tasks.busy)
 			return {
 				ok: false,
 				error: "The previous task is still stopping. Try again shortly.",
@@ -625,7 +651,7 @@ export class BotSession {
 				error: "Stop the current task before starting another player task.",
 			};
 		}
-		if (this.playerTaskCleanup || this.activeExcavateTask)
+		if (this.tasks.busy)
 			return {
 				ok: false,
 				error: "The previous task is still stopping. Try again shortly.",
@@ -635,10 +661,10 @@ export class BotSession {
 		if (type === "attack" && target.player.gamemode === 1) {
 			return { ok: false, error: "Creative-mode players are invulnerable." };
 		}
-		const onFinished = (outcome: PlayerTaskOutcome): void => {
-			if (this.activePlayerTask !== task || this.bot !== bot || this.destroyed)
+		const onFinished = (outcome: TaskOutcome): void => {
+			if (this.bot !== bot || this.destroyed || this.connectionClosing)
 				return;
-			this.activePlayerTask = null;
+			this.lastTaskOutcome = outcome;
 			this.protectStatus = undefined;
 			this.currentTask = null;
 			this.taskTarget = null;
@@ -674,16 +700,16 @@ export class BotSession {
 		};
 		const task =
 			type === "follow"
-				? new FollowTask(bot, target.player.username, onFinished, this.equipmentFor(bot))
+				? new FollowTask(bot, target.player.username, undefined, this.equipmentFor(bot))
 				: type === "attack"
-					? new AttackTask(bot, target.player.username, onFinished, this.equipmentFor(bot))
+					? new AttackTask(bot, target.player.username, undefined, this.equipmentFor(bot))
 					: new ProtectTask(
 							bot,
 							target.player.username,
-							onFinished,
+							() => {},
 							(status) => {
 								if (
-									this.activePlayerTask !== task ||
+									this.tasks.current !== task ||
 									this.bot !== bot ||
 									this.destroyed
 								)
@@ -693,15 +719,13 @@ export class BotSession {
 							},
 							undefined, undefined, this.equipmentFor(bot),
 						);
-		this.activePlayerTask = task;
+		this.lastTaskOutcome = undefined;
 		this.currentTask = type;
 		this.taskTarget = target.player.username;
 		this.setState("task");
 		this.resetIdleTimer();
 		try {
-			void task.start().catch(() => {
-				/* task reports its asynchronous failure */
-			});
+			this.tasks.start(task, onFinished);
 		} catch (error) {
 			this.stopTask();
 			return {
@@ -720,155 +744,38 @@ export class BotSession {
 	}
 
 	private startExcavate(region: ExcavateRegion): void {
-		if (!this.bot) return;
 		const bot = this.bot;
-
+		if (!bot) return;
+		const task = new ExcavateTask(bot, region, {
+			onEvent: (level, message) => { if (this.bot === bot && !this.destroyed && !this.connectionClosing) this.emitEvent(level, message); },
+			onProgress: (current, total) => {
+				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
+				const pct = Math.floor((current / total) * 100);
+				const prevPct = Math.floor(((current - 1) / total) * 100);
+				if (pct !== prevPct && pct % 10 === 0) this.emitEvent("info", `Excavation progress: ${pct}% (${current}/${total})`);
+			},
+		}, this.equipmentFor(bot));
 		this.currentTask = "excavate";
 		this.taskTarget = null;
+		this.lastTaskOutcome = undefined;
 		this.setState("task");
-
-		const task = new ExcavateTask(this.equipmentFor(this.bot));
-		this.activeExcavateTask = task;
-
+		this.tasks.start(task, outcome => {
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
+			this.lastTaskOutcome = outcome;
+			this.currentTask = null;
+			this.taskTarget = null;
+			if (this.state === "task") this.setState("idle");
+			this.resetIdleTimer();
+			this.emitEvent(outcome.level, outcome.message);
+			if (outcome.status === "completed") bot.chat("Excavation complete!");
+		});
 		const { x1, y1, z1, x2, y2, z2 } = region;
-		this.emitEvent(
-			"info",
-			`Excavate task started: (${x1},${y1},${z1}) → (${x2},${y2},${z2}).`,
-		);
-		if (this.bot) {
-			this.bot.chat(
-				`Starting excavation from (${x1},${y1},${z1}) to (${x2},${y2},${z2}).`,
-			);
-		}
-
-		task
-			.run(bot, region, {
-				onEvent: (type, message) => this.emitEvent(type, message),
-				onProgress: (current, total) => {
-					// Report every 10% milestone to avoid spamming the event log.
-					const pct = Math.floor((current / total) * 100);
-					const prevPct = Math.floor(((current - 1) / total) * 100);
-					if (pct !== prevPct && pct % 10 === 0) {
-						this.emitEvent(
-							"info",
-							`Excavation progress: ${pct}% (${current}/${total})`,
-						);
-					}
-				},
-				onComplete: () => {
-					if (this.activeExcavateTask !== task) return;
-					this.activeExcavateTask = null;
-					if (this.bot !== bot || this.destroyed) return;
-					this.emitEvent("success", "Excavation complete!");
-					if (this.bot) this.bot.chat("Excavation complete!");
-					this.activeExcavateTask = null;
-					this.currentTask = null;
-					this.taskTarget = null;
-					this.setState("idle");
-					this.resetIdleTimer();
-				},
-				onAbort: () => {
-					if (this.activeExcavateTask !== task) return;
-					this.activeExcavateTask = null;
-					if (this.bot !== bot || this.destroyed) return;
-					this.activeExcavateTask = null;
-					this.currentTask = null;
-					this.taskTarget = null;
-					if (this.state === "task") this.setState("idle");
-					this.resetIdleTimer();
-				},
-			})
-			.catch((err: Error) => {
-				if (this.bot !== bot || this.destroyed) return;
-				this.emitEvent("error", `Excavation error: ${err.message}`);
-			});
+		this.emitEvent("info", `Excavate task started: (${x1},${y1},${z1}) → (${x2},${y2},${z2}).`);
+		bot.chat(`Starting excavation from (${x1},${y1},${z1}) to (${x2},${y2},${z2}).`);
 	}
 
 	private stopTask(): void {
-		const playerTask = this.activePlayerTask;
-		if (playerTask instanceof ProtectTask) {
-			if (this.playerTaskCleanup) return;
-			const cleanup = playerTask
-				.stop()
-				.then(
-					() => {
-						if (this.activePlayerTask !== playerTask) return;
-						this.activePlayerTask = null;
-						this.protectStatus = undefined;
-						this.currentTask = null;
-						this.taskTarget = null;
-						if (this.state === "task") this.setState("idle");
-						this.resetIdleTimer();
-					},
-					(error: unknown) => {
-						this.emitEvent(
-							"error",
-							`Protect cleanup failed; retire this deployment: ${String(error)}`,
-						);
-					},
-				)
-				.then(() => {
-					// Failed cleanup keeps both the task and lease, blocking successors.
-					if (
-						this.activePlayerTask !== playerTask &&
-						this.playerTaskCleanup === cleanup
-					)
-						this.playerTaskCleanup = null;
-				});
-			this.playerTaskCleanup = cleanup;
-			return;
-		}
-		this.activePlayerTask = null;
-		if (playerTask) {
-			const cleanup = playerTask
-				.stop()
-				.catch((error: unknown) => {
-					this.emitEvent(
-						"warning",
-						`Player task cleanup failed: ${String(error)}`,
-					);
-				})
-				.finally(() => {
-					if (this.playerTaskCleanup === cleanup) this.playerTaskCleanup = null;
-				});
-			this.playerTaskCleanup = cleanup;
-		}
-
-		if (this.activeExcavateTask) {
-			this.activeExcavateTask.abort();
-			// activeExcavateTask is cleared in the onAbort callback of run().
-		}
-
-		if (this.bot && this.state === "task" && !playerTask) {
-			try {
-				const cleanup = Promise.resolve((this.activeExcavateTask ? undefined : this.bot.pvp.stop()))
-					.catch((error: unknown) => {
-						this.emitEvent(
-							"warning",
-							`Combat cleanup failed: ${String(error)}`,
-						);
-					})
-					.finally(() => {
-						if (this.playerTaskCleanup === cleanup)
-							this.playerTaskCleanup = null;
-					});
-				this.playerTaskCleanup = cleanup;
-			} catch (_) {
-				/* ignore if pvp not active */
-			}
-			try {
-				this.bot.pathfinder.setGoal(null);
-			} catch (_) {
-				/* ignore if pathfinder not active */
-			}
-		}
-
-		this.currentTask = null;
-		this.taskTarget = null;
-
-		if (this.state === "task") {
-			this.setState("idle");
-		}
+		this.tasks.stop();
 	}
 
 	// ─── Greeting & Chat Commands ─────────────────────────────────────────────────
@@ -876,9 +783,11 @@ export class BotSession {
 	private handleGreeting(username: string, message: string): void {
 		const lower = message.toLowerCase();
 		if (lower.includes("hi bot") || lower.includes("hello bot")) {
-			setTimeout(() => {
-				if (!this.bot) return;
-				this.bot.chat("Hi there!");
+			const bot = this.bot;
+			const timer = setTimeout(() => {
+				this.greetingTimers.delete(timer);
+				if (!bot || this.bot !== bot || this.destroyed || this.connectionClosing) return;
+				bot.chat("Hi there!");
 				this.callbacks.onChat({
 					username: this.config.botName,
 					message: "Hi there!",
@@ -886,6 +795,7 @@ export class BotSession {
 					isBot: true,
 				});
 			}, 500);
+			this.greetingTimers.add(timer);
 		}
 	}
 
@@ -971,7 +881,7 @@ export class BotSession {
 
 	async unequipAndDropArmor(slot: ArmorSlotId): Promise<void> {
 		const bot = this.bot;
-		if (!bot) return;
+		if (!bot || this.destroyed || this.connectionClosing || !["idle", "task"].includes(this.state)) return;
 		if (
 			this.manualInventoryBusy ||
 			(this.idleBehaviors && !this.idleBehaviors.prepareForTask()) ||
@@ -994,19 +904,20 @@ export class BotSession {
 		try {
 			equipment.armorOverrides.add(slot);
 			await equipment.exclusive(async () => {
-				if (this.bot !== bot || this.destroyed) return;
+				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 				await bot.unequip(slot);
-				if (this.bot !== bot || this.destroyed) return;
+				if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 				const invItem = bot.inventory.items().find((i) => equipment.sameItem(i, item));
 				if (invItem) await bot.tossStack(invItem);
 			});
-			if (this.bot !== bot || this.destroyed) return;
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 			this.emitEvent(
 				"info",
 				`Un-equipped and dropped ${item.displayName ?? item.name}.`,
 			);
 			this.emitArmorUpdate(bot);
 		} catch (err) {
+			if (this.bot !== bot || this.destroyed || this.connectionClosing) return;
 			this.emitEvent(
 				"error",
 				`Failed to drop armor: ${(err as Error).message}`,

@@ -212,24 +212,26 @@ function excavationFixture() {
   const f = fixture(); const { bot } = f;
   const block = { name: 'stone', diggable: true, digTime: () => 100, position: bot.entity.position } as unknown as NonNullable<ReturnType<typeof bot.blockAt>>;
   let present = true, digs = 0, completed = 0, aborted = 0;
-  bot.blockAt = () => present ? block : null; bot.canDigBlock = () => true; bot.pathfinder.goto = async () => {};
+  bot.blockAt = () => present ? block : { ...block, name: 'air' }; bot.canDigBlock = () => true; bot.pathfinder.goto = async () => {};
   bot.dig = async () => { digs++; present = false; };
-  const callbacks = { onEvent() {}, onProgress() {}, onComplete() { completed++; }, onAbort() { aborted++; } };
-  return { ...f, callbacks, remove: () => { present = false; }, digs: () => digs, completed: () => completed, aborted: () => aborted };
+  const callbacks = { onEvent() {}, onProgress() {} };
+  return { ...f, callbacks, record: (status: string) => { if (status === 'completed') completed++; else aborted++; }, remove: () => { present = false; }, digs: () => digs, completed: () => completed, aborted: () => aborted };
 }
 const region = { x1: 0, y1: 64, z1: 0, x2: 0, y2: 64, z2: 0 };
 for (const boundary of ['navigation', 'equipment', 'digging'] as const) test(`excavation Stop during final ${boundary} drains with one terminal callback`, async () => {
-  const f = excavationFixture(); let finish!: () => void, lateDigs = 0; const task = new ExcavateTask(f.equipment);
+  const f = excavationFixture(); let finish!: () => void, lateDigs = 0; const task = new ExcavateTask(f.bot, region, f.callbacks, f.equipment);
   if (boundary === 'navigation') f.bot.pathfinder.goto = () => new Promise<void>(r => { finish = r; });
   if (boundary === 'equipment') { f.bot.equip = () => new Promise<void>(r => { finish = r; }); Object.assign(f.bot, { heldItem: null }); }
   if (boundary === 'digging') f.bot.dig = () => new Promise<void>(r => { finish = r; }); else f.bot.dig = async () => { lateDigs++; };
-  const running = task.run(f.bot, region, f.callbacks); await flush(); assert.equal(typeof finish, 'function'); task.abort(); finish(); await running;
+  const running = task.start();
+  void task.completion.then(outcome => f.record(outcome.status)); await flush(); assert.equal(typeof finish, 'function'); const stopping = task.stop(); finish(); await Promise.all([running, stopping]);
   assert.equal(lateDigs, 0); assert.equal(f.aborted(), 1); assert.equal(f.completed(), 0); assert.equal(task.active, false);
 });
 test('excavation yields before digging and refreshes a removed block requirement after eating', async t => {
   const c = clock(t); const f = excavationFixture(); let arrive!: () => void;
-  f.bot.pathfinder.goto = () => new Promise<void>(r => { arrive = r; }); const task = new ExcavateTask(f.equipment);
-  const running = task.run(f.bot, region, f.callbacks); await flush();
+  f.bot.pathfinder.goto = () => new Promise<void>(r => { arrive = r; }); const task = new ExcavateTask(f.bot, region, f.callbacks, f.equipment);
+  const running = task.start();
+  void task.completion.then(outcome => f.record(outcome.status)); await flush();
   const runtime = new Upkeep(f.bot, { autoEat: true, autoArmor: false }, f.equipment, () => task.active ? task : null, () => true, () => {}, () => {},
     { eat: async () => { assert.equal(f.digs(), 0); Object.assign(f.bot, { heldItem: f.food }); f.remove(); f.bot.food = 20; } }, c.now);
   t.after(() => runtime.dispose()); await c.step(1_000); assert.equal(f.bot.heldItem, f.weapon);

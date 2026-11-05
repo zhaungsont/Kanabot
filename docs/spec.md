@@ -1,7 +1,7 @@
 # Kanabot — Technical Specification (MVP)
 
 > Version: 0.2.0  
-> Last updated: 2026-11-03
+> Last updated: 2026-11-05
 
 ---
 
@@ -56,6 +56,8 @@ Kanabot is a Minecraft-bot-as-a-service platform. Users visit a web dashboard, p
 | `spawning` | Loading indicator + EventLog |
 | `idle` / `task` | ActionPanel + ChatBox + EventLog + Disconnect button |
 | `dead` | EventLog + Reconnecting indicator |
+
+Deployment lifetime controls live above the action panel. Disconnect Bot is enabled for an authorized attached viewer in every bot state, including spawning/dead/disconnected; it waits for an attachment during restoration and is disabled while the viewer is offline. Task cleanup details and the latest terminal outcome are rendered from backend state.
 
 #### BotDeployForm
 
@@ -170,7 +172,7 @@ Font: System sans-serif stack. Monospace for EventLog and ChatBox timestamps.
 - mineflayer-pathfinder for bot movement
 - mineflayer-pvp for combat (Protect and Attack)
 - Shared EquipmentService for opt-in armor upkeep; armor-manager remains installed but is not loaded
-- Shared mining resolver using current block digTime for excavation; tool plugin remains available for legacy direct-test compatibility
+- Shared mining resolver using current block digTime, including bare hands, for excavation; the tool plugin remains installed/loaded but is not the active excavation selector
 
 ### 4.2 Socket.IO Events
 
@@ -225,6 +227,8 @@ Transitions:
 - `task → idle`: `performAction('stop')`
 - `any → dead`: mineflayer `death` event
 - `any → disconnected`: `disconnect()` or `kicked` event
+
+All foreground tasks implement the shared [local task lifecycle](TASK_LIFECYCLE.md). Stop preserves `task` until cleanup is confirmed. `BotSessionInfo.taskLifecycle` exposes running/stopping/cleanup-failed; `lastTaskOutcome` exposes completed/partial/stopped/failed execution and optional excavation counts. Pending cleanup reports trouble after ten seconds without releasing the lease. Rejected cleanup blocks successors until retirement. These outcomes remain in memory and do not add durable command delivery.
 
 ### 4.5 Bot Abilities
 
@@ -283,13 +287,12 @@ Task/manual requests cancel and return a retry explanation during cleanup; they 
   1. Normalise coordinates (min/max on each axis)
   2. Reject if total block count exceeds **10,000** (hard safety limit)
   3. Build ordered dig list: Y layers top-down, zigzag XZ within each layer
-  4. For each block: navigate within 3 blocks via pathfinder, equip optimal tool via `mineflayer-tool`, call `bot.dig()`
-  5. Non-diggable blocks (air, bedrock, barrier) are skipped automatically
-  6. If no suitable tool is in inventory, bot digs bare-handed (warning logged, task continues)
+  4. For each block: navigate within 3 blocks via pathfinder, reconcile the current mining requirement through EquipmentService, then call `bot.dig()`
+  5. Loaded air is counted as already clear; non-diggable blocks such as bedrock/barrier are skipped
+  6. Include bare hands when dig time is finite. Empty-hand selection verifies an empty hotbar slot; it never drops an item to make room
   7. Progress milestones at every 10% are emitted to EventLog
-  8. On completion: bot chats `"Excavation complete!"` and emits `success` event; transitions back to `idle`
-- Cancellation: `!stop` or Stop Task button sets `abortFlag`; running loop exits at next iteration
-- New dependency: `mineflayer-tool` — loaded in `BotSession.createBot()` via `bot.loadPlugin(toolPlugin)`
+  8. Report total/dug/already-clear/skipped/failed/unvisited counts. Unloaded or non-diggable positions are skipped; navigation/equipment/dig failures are counted. A traversal with skips/failures reports partial completion, not success. Only full completion sends `"Excavation complete!"`
+- Cancellation: `!stop` or Stop Task aborts owned work, requests active navigation/digging cancellation, checks every asynchronous boundary, and drains cleanup before releasing the shared task lease. Failed cancellation retains ownership; a stopped traversal reports unvisited positions
 
 #### Basic Greeting
 
@@ -302,13 +305,15 @@ Task/manual requests cancel and return a retry explanation during cleanup; they 
 | Rule | Detail |
 |---|---|
 | Idle timeout | 10 minutes of no user input (no actions, no chat from frontend) → auto-disconnect |
-| Retry on unexpected disconnect | Up to 5 attempts with exponential backoff (5s, 10s, 15s, 20s, 25s) |
-| No retry on kicked/banned | Session ends immediately |
+| Retry on unexpected disconnect | Up to 5 attempts with linear backoff (5s, 10s, 15s, 20s, 25s), after the captured connection confirms `end` |
+| No retry on kicked/banned | Connection ends without retry; the retained session can be explicitly retired |
 | One task at a time | `task` state can only be entered from `idle` |
 | Viewer lifetime | Socket loss/unmount detaches observation; the bot keeps running |
 | Bot identity | UUID independent of socket ID; resume requires its secret capability |
 | Explicit retirement | Disconnect Bot cancels retries and invalidates all viewers; retired creates cannot replay in this process |
 | Roster demand | Sampling continues while at least one attached viewer requests it |
+
+Early errors request captured-connection teardown; unconfirmed termination blocks automatic replacement. Delayed recovery/greeting callbacks cannot act on a replacement. Fatal uncaught process failures terminate the backend; an external supervisor and isolated workers are not installed by this change.
 
 ---
 
@@ -327,6 +332,8 @@ interface BotSessionInfo {
   spawnedAt: string | null; // ISO timestamp
   uptime: number;         // seconds since spawn
   protect?: ProtectStatus; // shared/botContracts.d.ts
+  taskLifecycle?: TaskLifecycleStatus; // shared/taskContracts.d.ts
+  lastTaskOutcome?: TaskOutcome;
 }
 
 interface ChatMessage {

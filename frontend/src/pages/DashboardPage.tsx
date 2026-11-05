@@ -10,6 +10,7 @@ import PlayerRolesPanel from '../components/PlayerRolesPanel';
 import AdBanner from '../components/AdBanner';
 import BehaviorPanel from '../components/BehaviorPanel';
 import UpkeepPanel from '../components/UpkeepPanel';
+import SessionControls from '../components/SessionControls';
 import './DashboardPage.css';
 
 export default function DashboardPage() {
@@ -67,11 +68,8 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="dashboard-main" style={styles.main}>
-        {hasSavedSession && <div style={{ gridColumn: '1 / -1' }} role="status">
-          {isRestoring ? 'Reconnecting to your bot…' : 'Your bot runs independently of this page. Use Disconnect Bot to stop it.'}
-          {deployError && <p role="alert">{deployError}</p>}
-          {!isRestoring && !isDeploying && connected && <button style={styles.backBtn} onClick={resumeBot}>Reconnect to bot</button>}
-        </div>}
+        {hasSavedSession && <SessionControls connected={connected} restoring={isRestoring} deploying={isDeploying}
+          attached={botInfo !== null} error={deployError} onResume={resumeBot} onDisconnect={disconnectBot} />}
         {showPanel && (
           <div style={{ gridColumn: '1 / -1' }}>
             <PlayerListPanel
@@ -105,7 +103,6 @@ export default function DashboardPage() {
                 botInfo={botInfo}
                 onAction={performAction}
                 onExcavate={excavate}
-                onDisconnect={disconnectBot}
               />
             )
           )}

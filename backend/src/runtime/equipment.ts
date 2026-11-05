@@ -21,7 +21,8 @@ export interface EquipmentOwner {
   refreshEquipmentIntent?(): void;
 }
 export class EquipmentUnavailable extends Error {}
-type Resolver = (requirement: Extract<HandRequirement, { kind: 'best' }>, items: Item[]) => Item | null;
+type EquipmentSelection = Item | 'empty' | null;
+type Resolver = (requirement: Extract<HandRequirement, { kind: 'best' }>, items: Item[]) => EquipmentSelection;
 
 /** One inventory transaction channel per captured bot. No task/UI/RBAC imports. */
 export class EquipmentService {
@@ -36,8 +37,11 @@ export class EquipmentService {
       const p = requirement.context?.position;
       const block = p && bot.blockAt(new Vec3(p.x, p.y, p.z));
       if (!block || !block.diggable) return null;
-      return items.filter(i => this.usable(i)).map(item => ({ item, time: this.digTime(block, item) }))
-        .filter(v => Number.isFinite(v.time)).sort((a, b) => a.time - b.time || a.item.slot - b.item.slot)[0]?.item ?? null;
+      const best = items.filter(i => this.usable(i)).map(item => ({ item, time: this.digTime(block, item) }))
+        .filter(v => Number.isFinite(v.time)).sort((a, b) => a.time - b.time || a.item.slot - b.item.slot)[0];
+      const bareHandTime = this.digTime(block, null);
+      if (Number.isFinite(bareHandTime) && (!best || bareHandTime < best.time)) return 'empty';
+      return best?.item ?? null;
     });
   }
   get busy(): boolean { return this.pending > 0; }
@@ -56,10 +60,10 @@ export class EquipmentService {
     const material = ['wooden', 'golden', 'stone', 'iron', 'diamond', 'netherite'].indexOf(item.name.split('_')[0]);
     return material * 100 + (item.name.endsWith('_sword') ? 10 : 0) + (item.enchants?.find(e => e.name === 'sharpness')?.lvl ?? 0);
   }
-  private digTime(block: Block, item: Item): number {
-    return block.digTime(item.type, false, false, false, item.enchants ?? [], this.bot.entity.effects ?? []);
+  private digTime(block: Block, item: Item | null): number {
+    return block.digTime(item?.type ?? null, false, false, false, item?.enchants ?? [], this.bot.entity.effects ?? []);
   }
-  resolve(requirement: HandRequirement): Item | null {
+  resolve(requirement: HandRequirement): EquipmentSelection {
     const items = this.bot.inventory.items();
     if (requirement.kind === 'specific') return items.find(i => i === requirement.item) ?? items
       .filter(i => this.sameItem(i, requirement.item)).sort((a, b) => Number(b.slot === requirement.item.slot) - Number(a.slot === requirement.item.slot) || a.slot - b.slot)[0] ?? null;
@@ -75,7 +79,9 @@ export class EquipmentService {
       owner?.refreshEquipmentIntent?.();
       const revision = owner?.equipmentIntent.revision;
       const requirement = owner?.equipmentIntent.requirement ?? { kind: 'unrestricted' as const };
-      if (requirement.kind === 'empty') {
+      const item = requirement.kind === 'unrestricted'
+        ? (fallback ? this.resolve({ kind: 'specific', item: fallback }) : null) : this.resolve(requirement);
+      if (requirement.kind === 'empty' || item === 'empty') {
         if (this.bot.heldItem) {
           const slots = this.bot.inventory.slots;
           const start = (this.bot as Bot & { QUICK_BAR_START?: number }).QUICK_BAR_START ?? 36;
@@ -85,8 +91,6 @@ export class EquipmentService {
         }
         if (this.bot.heldItem) throw new EquipmentUnavailable('Empty hand could not be verified.');
       } else {
-        const item = requirement.kind === 'unrestricted'
-          ? (fallback ? this.resolve({ kind: 'specific', item: fallback }) : null) : this.resolve(requirement);
         if (!item && requirement.kind !== 'unrestricted') throw new EquipmentUnavailable('Required task item is unavailable.');
         if (item && this.bot.heldItem !== item) await this.bot.equip(item, 'hand');
         if (signal.aborted || (owner && !owner.active)) return;

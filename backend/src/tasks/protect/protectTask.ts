@@ -4,18 +4,22 @@ import pathfinderPackage from 'mineflayer-pathfinder';
 import type { Movements, Pathfinder } from 'mineflayer-pathfinder';
 import type { ProtectStatus } from '../../../../shared/botContracts.js';
 import { resolvePlayerTarget } from '../../players/playerTarget.js';
-import type { PlayerTaskOutcome } from '../trackedPlayerTask.js';
+import type { TaskOutcome } from '../../../../shared/taskContracts.js';
 import { HeldWeaponEquipment, type EquipmentPort } from './equipment.js';
 import { ProtectCombatAdapter } from './combatAdapter.js';
 import { ThreatObserver } from './threatObserver.js';
 import { distanceSquared, reason, selectThreat } from './threatSelector.js';
-import { EquipmentIntent, EquipmentUnavailable, type EquipmentOwner, type EquipmentService } from '../../runtime/equipment.js';
+import { EquipmentIntent, EquipmentUnavailable, type EquipmentService } from '../../runtime/equipment.js';
+import { TaskCompletion, type TaskRuntime } from '../taskRuntime.js';
 
 const { goals } = pathfinderPackage;
 let nextGeneration = 0;
 /** One movement owner, one serialized decision operation, independent of viewers and RBAC. */
-export class ProtectTask implements EquipmentOwner {
+export class ProtectTask implements TaskRuntime {
   readonly equipmentIntent = new EquipmentIntent();
+  private readonly completionState = new TaskCompletion();
+  readonly completion = this.completionState.promise;
+  readonly cleanupStarted = this.completionState.cleanupStarted;
   private paused = false;
   private pausing: Promise<boolean> | null = null;
   get active(): boolean { return !!this.player && !this.abort.signal.aborted; }
@@ -39,7 +43,7 @@ export class ProtectTask implements EquipmentOwner {
   private busy = false;
   private ended = false;
   private terminal = false;
-  private outcome: PlayerTaskOutcome = { level: 'info', message: 'Protect stopped.' };
+  private outcome: TaskOutcome = { status: 'stopped', level: 'info', message: 'Protect stopped.' };
   private pathFailed = false;
   private progressAt = 0;
   private progressDistance = Infinity;
@@ -49,7 +53,7 @@ export class ProtectTask implements EquipmentOwner {
   private readonly generation = ++nextGeneration;
 
   constructor(private readonly bot: Bot, readonly target: string,
-    private readonly onFinished: (outcome: PlayerTaskOutcome) => void,
+    private readonly onFinished: (outcome: TaskOutcome) => void,
     private readonly onStatus: (status: ProtectStatus) => void,
     private readonly equipment: EquipmentPort = new HeldWeaponEquipment(bot),
     private readonly now: () => number = () => performance.now(),
@@ -248,15 +252,16 @@ export class ProtectTask implements EquipmentOwner {
     const key = JSON.stringify({ ...status, closestDistance: undefined });
     if (key !== this.lastStatus) { this.lastStatus = key; this.onStatus(status); }
   }
-  private fail(message: string, code?: PlayerTaskOutcome['code']): void {
+  private fail(message: string, code?: TaskOutcome['code']): void {
     if (this.terminal) return;
     this.terminal = true;
-    this.outcome = { level: 'warning', message, ...(code ? { code } : {}) };
+    this.outcome = { status: 'failed', level: 'warning', message, ...(code ? { code } : {}) };
     // Never await teardown from the operation teardown itself needs to drain.
     queueMicrotask(() => { void this.stop().catch(() => { /* stopping status retains the lease */ }); });
   }
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
+    this.completionState.beginCleanup();
     this.abort.abort(); this.phase = 'stopping'; this.pending = false;
     if (this.interval) clearInterval(this.interval);
     if (this.urgent) clearTimeout(this.urgent);
@@ -286,8 +291,9 @@ export class ProtectTask implements EquipmentOwner {
         this.phase = 'cleanup-failed'; this.publish(`Cleanup failed; retire this deployment before starting another task: ${errors.map(String).join('; ')}`);
         throw new AggregateError(errors, 'Protect cleanup failed');
       }
-      this.onFinished(this.outcome);
-    })().finally(() => clearTimeout(deadline));
+    })().then(() => {
+      this.completionState.complete(this.outcome, this.onFinished);
+    }, error => { this.completionState.fail(error); throw error; }).finally(() => clearTimeout(deadline));
     return this.stopping;
   }
 }

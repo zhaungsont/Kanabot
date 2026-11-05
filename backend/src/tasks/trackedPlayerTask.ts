@@ -2,17 +2,19 @@ import type { Bot, Player } from 'mineflayer';
 import type { Entity } from 'prismarine-entity';
 import type { Movements, Pathfinder } from 'mineflayer-pathfinder';
 import { MAX_PLAYER_TASK_DISTANCE, resolvePlayerTarget } from '../players/playerTarget.js';
-import { EquipmentIntent, type EquipmentOwner, type EquipmentService } from '../runtime/equipment.js';
+import { EquipmentIntent, type EquipmentService } from '../runtime/equipment.js';
+import { TaskCompletion, type TaskRuntime } from './taskRuntime.js';
+import type { TaskOutcome } from '../../../shared/taskContracts.js';
 
-export interface PlayerTaskOutcome {
-  level: 'info' | 'warning' | 'error';
-  message: string;
-  code?: 'PLAYER_UNREACHABLE';
-}
+export type PlayerTaskOutcome = TaskOutcome;
 
 /** Owns the complete task lifecycle; no sockets, browser state, or session registry. */
-export abstract class TrackedPlayerTask implements EquipmentOwner {
+export abstract class TrackedPlayerTask implements TaskRuntime {
   readonly equipmentIntent = new EquipmentIntent();
+  private readonly terminal = new TaskCompletion();
+  readonly completion = this.terminal.promise;
+  readonly cleanupStarted = this.terminal.cleanupStarted;
+  private outcome: TaskOutcome = { status: 'stopped', level: 'info', message: 'Player task stopped.' };
   protected readonly cancellation = new AbortController();
   protected paused = false;
   private pausing: Promise<boolean> | null = null;
@@ -31,15 +33,23 @@ export abstract class TrackedPlayerTask implements EquipmentOwner {
   constructor(
     protected readonly bot: Bot,
     readonly target: string,
-    private readonly onFinished: (outcome: PlayerTaskOutcome) => void,
+    private readonly onFinished: (outcome: PlayerTaskOutcome) => void = () => {},
     protected readonly equipmentService?: EquipmentService,
   ) {}
 
   start(): Promise<void> {
     if (this.running || this.stopping) return Promise.reject(new Error('Task has already been started.'));
-    const target = resolvePlayerTarget(this.bot, this.target);
-    if (!target.ok) return Promise.reject(new Error(target.error));
     this.running = true;
+    this.beginning = Promise.resolve().then(() => { if (this.running) return this.initialize(); });
+    void this.beginning.catch((error: unknown) => {
+      this.finish({ level: 'error', message: `Player task failed: ${String(error)}` });
+    });
+    return this.beginning;
+  }
+
+  private async initialize(): Promise<void> {
+    const target = resolvePlayerTarget(this.bot, this.target);
+    if (!target.ok) throw new Error(target.error);
     this.targetEntity = target.entity;
     this.dimension = this.bot.game.dimension;
     this.lastProgressAt = Date.now();
@@ -68,13 +78,7 @@ export abstract class TrackedPlayerTask implements EquipmentOwner {
     this.bot.on('end', this.onEnd);
     this.bot.on('path_update', this.onPathUpdate);
     this.timer = setInterval(() => this.checkTarget(), 1_000);
-    this.beginning = Promise.resolve().then(async () => {
-      if (this.running) await this.begin(target.entity);
-    });
-    this.beginning.catch((error: unknown) => {
-      this.finish({ level: 'error', message: `Player task failed: ${String(error)}` });
-    });
-    return this.beginning;
+    if (this.running) await this.begin(target.entity);
   }
 
   protected abstract begin(entity: Entity): void | Promise<void>;
@@ -155,15 +159,15 @@ export abstract class TrackedPlayerTask implements EquipmentOwner {
     }
   }
 
-  protected finish(outcome: PlayerTaskOutcome): void {
+  protected finish(outcome: Omit<TaskOutcome, 'status'>): void {
     if (!this.running) return;
-    void this.stop().then(() => this.onFinished(outcome), (error: unknown) => {
-      this.onFinished({ level: 'error', message: `${outcome.message} Cleanup failed: ${String(error)}` });
-    });
+    this.outcome = { ...outcome, status: outcome.level === 'info' ? 'stopped' : 'failed' };
+    void this.stop().catch(() => { /* completion retains cleanup failure for the coordinator */ });
   }
 
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
+    this.terminal.beginCleanup();
     this.running = false;
     this.cancellation.abort();
     if (this.timer) clearInterval(this.timer);
@@ -176,20 +180,21 @@ export abstract class TrackedPlayerTask implements EquipmentOwner {
     this.bot.removeListener('end', this.onEnd);
     this.bot.removeListener('path_update', this.onPathUpdate);
     this.stopping = (async () => {
-      try {
-        // Finish pending plugin startup before cleanup; it must not restart motion later.
-        await this.beginning.catch(() => undefined);
-        await this.pausing?.catch(() => undefined);
-        await this.endMotion();
-      } finally {
-        this.bot.pathfinder.setGoal(null);
-        if (this.previousPathSettings) {
-          const { movements, ...settings } = this.previousPathSettings;
-          Object.assign(this.bot.pathfinder, settings);
-          this.bot.pathfinder.setMovements(movements);
-        }
+      // A failed cleanup does not skip independent restorations or release ownership.
+      await this.beginning.catch(() => undefined);
+      const errors: unknown[] = [];
+      try { await this.pausing; } catch (error) { errors.push(error); }
+      try { await this.endMotion(); } catch (error) { errors.push(error); }
+      try { this.bot.pathfinder.setGoal(null); } catch (error) { errors.push(error); }
+      if (this.previousPathSettings) {
+        const { movements, ...settings } = this.previousPathSettings;
+        Object.assign(this.bot.pathfinder, settings);
+        try { this.bot.pathfinder.setMovements(movements); } catch (error) { errors.push(error); }
       }
-    })();
+      if (errors.length) throw new AggregateError(errors, 'Player task cleanup failed');
+    })().then(() => {
+      this.terminal.complete(this.outcome, this.onFinished);
+    }, error => { this.terminal.fail(error); throw error; });
     return this.stopping;
   }
 }

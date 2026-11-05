@@ -25,6 +25,8 @@ export interface BotSessionInfo {
   protect?: ProtectStatus;
   behaviors?: import('./behaviorContracts.js').BehaviorStatus;
   upkeep?: import('./upkeepContracts.js').UpkeepStatus;
+  taskLifecycle?: import('./taskContracts.js').TaskLifecycleStatus;
+  lastTaskOutcome?: import('./taskContracts.js').TaskOutcome;
 }
 export interface ChatMessage {
   username: string; message: string; timestamp: number; isBot?: boolean;

@@ -28,10 +28,9 @@ Kanabot/
 │   │   ├── botSession.ts       # Mineflayer lifecycle + feature orchestration
 │   │   ├── players/            # Roster, targets, whispers, player socket adapter
 │   │   ├── behaviors/          # Idle self-defense/drowning, food adapter
-│   │   ├── runtime/            # Shared scoped combat lease
+│   │   ├── runtime/            # Captured connections, equipment, combat, fatal-error monitor
 │   │   ├── upkeep/             # Auto-eat/armor scheduling and handoffs
-│   │   ├── runtime/            # Shared equipment lane and combat compatibility
-│   │   ├── tasks/              # Follow/attack/excavation + modular protect/ runtime
+│   │   ├── tasks/              # Shared task contract/coordinator + feature runtimes
 │   │   └── types.ts            # Shared contract re-exports
 │   ├── test/                   # Regression tests + simulated Mineflayer fixtures
 │   ├── .nvmrc                  # Node.js 24.15.0
@@ -275,11 +274,11 @@ The roster reads Mineflayer's existing player cache; it does not query the Minec
 
 The bot row also shows ten hunger icons and available saturation from Mineflayer's own state. Other players' hunger is unavailable through the standard client protocol; no values are guessed. This uses the existing lazy three-second roster updates.
 
-`backend/src/players/` contains roster projection, target validation, whisper handling, and the socket adapter. `backend/src/tasks/followTask.ts` and `attackTask.ts` share task lifecycle/cleanup in `trackedPlayerTask.ts`; these runtime modules do not depend on Socket.IO. JSON-only interfaces live in `shared/`. The in-process registry owns execution independently of browser sockets; persistent workers/accounts described in `ARCHITECTURE.md` remain proposed work.
+`backend/src/players/` contains roster projection, target validation, whisper handling, and the socket adapter. `backend/src/tasks/followTask.ts` and `attackTask.ts` share tracked-target behavior in `trackedPlayerTask.ts`. All foreground tasks implement the [shared task lifecycle](docs/TASK_LIFECYCLE.md), with one transport-independent coordinator retaining ownership until cleanup is confirmed. These runtime modules do not depend on Socket.IO. JSON-only interfaces live in `shared/`. The in-process registry owns execution independently of browser sockets; persistent workers/accounts described in `ARCHITECTURE.md` remain proposed work.
 
 ### Leaving and returning to the dashboard
 
-Navigation, refresh, tab closure, and temporary network loss detach the viewer; they do not stop the bot. The dashboard saves a stable bot ID and secret access token before deployment and automatically reattaches on return, restoring current state, cached armor, and bounded recent chat/events. **Disconnect Bot** explicitly stops and retires that bot for every attached viewer. The existing ten-minute idle timeout still applies; active tasks can continue without viewers.
+Navigation, refresh, tab closure, and temporary network loss detach the viewer; they do not stop the bot. The dashboard saves a stable bot ID and secret access token before deployment and automatically reattaches on return, restoring current state, cached armor, and bounded recent chat/events. **Disconnect Bot** explicitly stops and retires that bot for every attached viewer, including while spawning, dead or disconnected. Connection replacement waits for the old connection to confirm termination. The existing ten-minute idle timeout still applies; active tasks can continue without viewers.
 
 This is a local, memory-only foundation: backend restarts lose sessions/history. One bot handle is remembered per browser origin and backend URL; tabs with the same handle can control that bot. Clearing browser storage loses access to it. The token is a local bearer capability, not a user account; keep this deployment local until hosted identity and operational controls are implemented. See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and [KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for deferred bugs and architecture work.
 
@@ -288,6 +287,8 @@ Player contracts are the shared shapes for player records, roster snapshots, com
 Follow and attack require a currently tracked player with a loaded target chunk within 64 blocks. They do not find hidden players or navigate portals. A dynamic follow goal tracks movement without restarting its search every second. Both tasks stop on target loss/death, bot dimension change/disconnect/death, failed paths, or 30 seconds without movement progress when outside the follow radius. Their pathfinding budgets are scoped and restored after cleanup; ordinary follow/attack will not dig or pillar through terrain. Stop cleanup must finish before another task can start.
 
 Whispers use Mineflayer's `/tell` support and work for roster players outside tracking range where the server permits it. An acknowledgement means the command was submitted, not that the server delivered it. Sent/received whispers are labeled private in the dashboard; sending into the ordinary chat box remains public chat.
+
+Unexpected uncaught failures now terminate the backend instead of leaving all sessions in uncertain state. API and bots still share one process; a fatal failure loses in-memory sessions and requires a process restart. Supervised worker isolation remains future work.
 
 ### Verification
 

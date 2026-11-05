@@ -5,7 +5,6 @@ interface ActionPanelProps {
   botInfo: BotSessionInfo;
   onAction: (action: BotAction) => void;
   onExcavate: (region: ExcavateRegion) => void;
-  onDisconnect: () => void;
 }
 
 function useUptime(spawnedAt: string | null): string {
@@ -60,7 +59,7 @@ function CoordInput({
   );
 }
 
-export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnect }: ActionPanelProps) {
+export default function ActionPanel({ botInfo, onAction, onExcavate }: ActionPanelProps) {
   const [followTarget, setFollowTarget] = useState('');
   const [protectTarget, setProtectTarget] = useState('');
   const [dig, setDig] = useState({ x1: '', y1: '', z1: '', x2: '', y2: '', z2: '' });
@@ -68,7 +67,6 @@ export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnec
 
   const isIdle = botInfo.state === 'idle';
   const isInTask = botInfo.state === 'task';
-  const isActive = isIdle || isInTask;
 
   const handleFollow = () => {
     if (!followTarget.trim()) return;
@@ -125,6 +123,11 @@ export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnec
           <div>{botInfo.protect.detail}</div>
         </div>
       )}
+
+      {botInfo.taskLifecycle && botInfo.taskLifecycle.phase !== 'running' && (
+        <div role="status">{botInfo.taskLifecycle.detail}</div>
+      )}
+      {botInfo.lastTaskOutcome && <div role="status">{botInfo.lastTaskOutcome.message}</div>}
 
       {/* Actions */}
       <div style={styles.actions}>
@@ -208,12 +211,6 @@ export default function ActionPanel({ botInfo, onAction, onExcavate, onDisconnec
         )}
       </div>
 
-      {/* Disconnect */}
-      {isActive && (
-        <button style={styles.disconnectBtn} onClick={onDisconnect}>
-          Disconnect Bot
-        </button>
-      )}
     </div>
   );
 }
@@ -381,17 +378,5 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#fff',
     color: 'var(--color-text)',
     minWidth: 0,
-  },
-  disconnectBtn: {
-    background: 'transparent',
-    border: '1.5px solid var(--color-error)',
-    color: 'var(--color-error)',
-    borderRadius: 'var(--radius-sm)',
-    padding: '0.5rem 1rem',
-    fontWeight: 700,
-    fontSize: '0.85rem',
-    cursor: 'pointer',
-    alignSelf: 'flex-start',
-    transition: 'background 0.15s',
   },
 };

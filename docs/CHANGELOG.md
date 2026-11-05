@@ -8,6 +8,14 @@ Format: `[version] — YYYY-MM-DD`
 
 ## [Unreleased]
 
+### Task lifecycle and failure-path hardening — 2026-11-05
+
+- Added one transport-independent foreground TaskRuntime/TaskCoordinator contract for Follow, Attack, Protect and excavation. Stop and natural teardown retain ownership until cleanup is confirmed; pending cleanup reports trouble after ten seconds and rejected cleanup blocks successors until retirement.
+- Added shared running/stopping/cleanup-failed projection and completed/partial/stopped/failed outcomes to current/resume state. Excavation now supports finite bare-hand selection and reports dug/already-clear/skipped/failed/unvisited counts; partial traversals no longer announce full completion.
+- Retain captured Minecraft connections until end confirms termination before retry. Early errors and partial initialization request teardown; late connect/error/greeting callbacks cannot act on replacement or retired sessions.
+- Replaced process-wide exception suppression with fatal-error observation that preserves Node's non-zero termination behavior. API/bots still share a process and in-memory sessions are lost on fatal exit; process supervision and worker isolation remain future work.
+- Moved deployment retirement controls outside gameplay availability so an attached viewer can retire spawning, dead and disconnected bots. Added simulated runtime, child-process fatal-exit and server-rendered control regressions; live Minecraft/browser/cloud validation remains outstanding.
+
 ### Bot Upkeep implementation — 2026-11-04
 
 - Split Idle Behaviors (Fight/Flight, bounded Avoid drowning, Sleep TODO) from opt-in Bot Upkeep (Auto-eat/Auto-armor during or outside tasks), with separate authorized controls/status and event logging.
